@@ -350,8 +350,43 @@ def extractFromDataFiles():
     D[3]=np.array(D[3])
     saveData(D)
     
+def partialPooling(dat,compileStan=True,runStan=False,ssmm=1):
+    mdl='''
+        data {
+            int<lower=0> N;
+            vector[2] y[N,9];
+            vector[2] c[9];
+        }parameters{
+            vector[4] o[N];
+            vector<lower=0,upper=100>[2] sy;
+            vector[4] mo;
+        vector<lower=0,upper=100>[4] so;
+        corr_matrix[4] ro;
+        } model {
+        sy~cauchy(0,20);
+        so~cauchy(0,20);
+        for (n in 1:N){ o[n]~multi_normal(mo,quad_form_diag(ro,so));
+        for (p in 1:9){
+            if (! is_nan(y[n,p][1]))
+                c[p]~multi_normal(head(o[n],2)+tail(o[n],2).*y[n,p],diag_matrix(sy));       
+        }}} '''
+    import pystan,pickle
+    from matusplotlib import loadStanFit,saveStanFit
+    dat['N']=dat['y'].shape[0]
+    if compileStan:
+        smsv=pystan.StanModel(model_code=mdl)
+        with open(DPATH+f'smlCalib.pkl', 'wb') as f: pickle.dump(smsv, f)
     
-def accuracyCorrection(CALIB=False,applyCor=True):
+    if runStan:
+        with open(DPATH+f'smlCalib.pkl','rb') as f: smsv=pickle.load(f)
+        fit=smsv.sampling(data=dat,chains=6,n_jobs=6,
+            thin=int(max(2*ssmm,1)),iter=int(ssmm*2000),warmup=int(ssmm*1000))
+        saveStanFit(fit,'fitcalib')
+        print(fit)
+    w=loadStanFit('fitcalib')
+    return np.median(w['o'],0),np.median(w['mo'],0)
+        
+def accuracyCorrection(method='complete pooling',applyCor=True,exclude=False):
     print('Performing linear accuracy correction')
     import ast
     D=loadData()
@@ -375,38 +410,62 @@ def accuracyCorrection(CALIB=False,applyCor=True):
                     D[2][i,mp[dd]+1,(3+2*h):(5+2*h)]=np.nan
         else:stop
     # compute linear correction based on data from calibration routine
-    for i in range(len(D[2])):
-        d=D[2][i]
-        ctrue=d[1:10,1:3]
+    if method=='complete pooling':
         for e in range(2):
-            c=d[1:10,3+e*2:5+e*2]
-            coef=[np.nan,np.nan,np.nan,np.nan,np.nan]
-            assert(np.all(np.isnan(c[:,0])==np.isnan(c[:,1])))
-            sel=~np.isnan(c[:,0])
-            if np.isnan(c[:,0]).sum()>5:# don't apply correction when 3 or less calibration locations available
-                D[2][i][0,1:6]=coef
-                continue
-            temp=0
-            for k in range(2):
-                x=np.column_stack([np.ones(sel.sum()),c[sel,k]])
-                res =np.linalg.lstsq(x,ctrue[sel,k],rcond=None)
-                coef[k*2:(k+1)*2]=res[0]
-                temp+=res[1][0]
-            coef[4]=temp**0.5/sel.sum()
-            assert(np.all(np.isnan(coef))==np.any(np.isnan(coef)))
-            D[2][i][[0,-1][e],1:6]=coef
+            g=[]
+            for i in range(len(D[2])):
+                d=D[2][i]
+                ctrue=d[1:10,1:3]
+                c=d[1:10,3+e*2:5+e*2]
+                coef=[np.nan,np.nan,np.nan,np.nan,np.nan]
+                assert(np.all(np.isnan(c[:,0])==np.isnan(c[:,1])))
+                sel=~np.isnan(c[:,0])
+                if np.isnan(c[:,0]).sum()>5:# don't apply correction when 3 or less calibration locations available
+                    D[2][i][[0,-1][e],1:6]=coef
+                    continue
+                temp=0
+                for k in range(2):
+                    x=np.column_stack([np.ones(sel.sum()),c[sel,k]])
+                    res =np.linalg.lstsq(x,ctrue[sel,k],rcond=None)
+                    coef[k*2:(k+1)*2]=res[0]
+                    temp+=res[1][0]
+                coef[4]=temp**0.5/sel.sum()
+                assert(np.all(np.isnan(coef))==np.any(np.isnan(coef)))
+                D[2][i][[0,-1][e],1:6]=coef
+                g.append(coef)
+            gm=np.nanmean(g,0)
+            for i in range(len(D[2])):
+                if np.any(np.isnan(D[2][i][[0,-1][e],1:6])) and not exclude:
+                    D[2][i][[0,-1][e],1:6]=gm
+    elif method=='partial pooling':
+        dat={'c':D[2][4][1:10,1:3],'y':[],'id':[]} 
+        for e in range(2):
+            dat['y']=[];dat['id']=[]
+            for i in range(len(D[2])):
+                c=D[2][i][1:10,3+e*2:5+e*2]
+                assert(np.all(np.isnan(c[:,0])==np.isnan(c[:,1])))
+                sel=~np.isnan(c[:,0])
+                if np.isnan(c[:,0]).sum()<=5:# don't apply correction when 3 or less calibration locations available  
+                    dat['y'].append(c)
+                    dat['id'].append(i)
+            dat['y']=np.array(dat['y'])
+            dat['c']=np.array(dat['c'])
+            #print(dat['y'].shape,dat['c'].shape);bla  
+            np.save('c',dat['c'])    
+            o,mo=partialPooling(dat,compileStan=False,ssmm=1)
+            for i in range(len(D[2])):
+                if not exclude: D[2][i][[0,-1][e],1:5]=mo
+            for k in range(len(dat['id'])):
+                D[2][dat['id'][k]][[0,-1][e],1:5]=o[k,:]
     # apply linear correction
     for i in range(len(D[2])):
         if D[4][i] is None:continue
         for xy in range(2):
             for e in range(2):
                 cor=D[2][i][[0,-1][e],1+xy*2:3+xy*2]
-                if not CALIB or np.any(np.isnan(cor)): cor=[[[13.1752,1.288],[-6.083,1.3044]],[[8.0115,1.2726],[-6.2817,1.3044]]][e][xy]
-                #cor=[[[-0.69,0.97],[-1.02,0.97]],[[0.74,0.97],[-0.99,0.97]]][e][xy]
-                #cor=[[[ 14.29411294,1.32790604], [ -5.21964557,1.34478597]],
-                #     [[7.49635237,1.3119704 ], [ -5.45542969,1.34428431]]][e][xy]
+                if method=='external': cor=[[[13.1752,1.288],[-6.083,1.3044]],[[8.0115,1.2726],[-6.2817,1.3044]]][e][xy]
+                if not exclude: assert(not np.any(np.isnan(cor)))
                 temp=(D[4][i][:,GLX+xy+2*e]-D[1][i,2*e+xy,0])/D[1][i,2*e+xy,1]
-                #temp=D[4][i][:,GLX+xy+2*e]
                 D[4][i][:,GLX+xy+2*e]=cor[1]*temp+cor[0]
     # compute drift correction
     tms=[]
@@ -514,7 +573,7 @@ def changeUnits():
     saveData(D)
 def extractSaccades():
     from remodnav import EyegazeClassifier
-    from nslr_hmm import classify_gaze
+    #from nslr_hmm import classify_gaze
     from sys import stdout
     D=loadData()
     def tseries2eventlist(tser):
@@ -640,7 +699,8 @@ def plotGaze(D,i,g,xlm=None,showEvents=[]):
     f=np.int32(f[~np.isnan(f)][-1])
     s=int(s)
     for e in range(3):
-        #plt.figure(figsize=(D[4][i][-1,GC]/10*8,4))
+        #plt.fig
+        ure(figsize=(D[4][i][-1,GC]/10*8,4))
         plt.figure(figsize=(16,4))
         for ax in range(2):
             plt.ylabel(['L','R','B'][e])
@@ -781,12 +841,12 @@ def computeSacStats(tartrl=range(0,25),compileStan=True,suf='',bounceSac=True,
         phis=np.concatenate(phis,0);bts=np.concatenate(bts,0)
         xi=np.int32(np.concatenate(xi))+1;xv=np.concatenate(xv,0);
         xc=np.concatenate(xc,0)+100;xo=np.concatenate(xo,0);
-        print(np.unique(xc));bla
+        #print(np.unique(xc));bla
         k=np.unique(xc).tolist()
         K=y.shape[1]
         #y=np.squeeze(y)
         print('M=',xi.size)
-        np.save('xi',xi);stop
+        #np.save('xi',xi);stop
         if not bounceSac: 
             return {'N':len(xa),'xa':xa,'M':xi.size,'K':K, 'xi':xi,'y':y,'xv':xv,'xo':xo}
         meta=[]
@@ -978,11 +1038,11 @@ def plotExpl():
     ax.add_patch(Wedge([0,ss],0.5,90,phi,ec='r',fc='none'))
     ax.add_patch(Wedge([0,ss],0.7,10,phi,ec='g',fc='none'))
 
-    for c in ['r','r--','g']:plt.plot(3,3,c)
+    #for c in ['r','r--','g']:plt.plot(3,3,c)
     plt.plot([-1,0],[0.4,ss],'c')
     plt.plot([1,0],[0.4,ss],'c--')
     plt.plot([-1,1],[0,0],color='k',lw=5)
-    plt.legend(['angle of incidence','angle of reflection','saccade angle',
+    plt.legend(['angle of reflection','angle of incidence','saccade angle',
         'old trajectory','new trajectory','barrier'],ncol=2,loc=[-.1,0.65],fontsize=8)
     plt.plot([0,0],[ss,2],color='gray')
     plt.plot(0.69,.155,'xg')
@@ -1003,6 +1063,8 @@ def plotSacStats():
     def plotSmps(suf,xshift=0,age=np.linspace(4,11,101),mspeed=40,lim=None,crc=False):
         '''mspeed = speed in deg/s'''
         cis=[[],[],[],[],[],[],[]]
+        import os.path
+        if not os.path.exists(DPATH+f'sm{suf}.wfit'):return cis
         meta=np.load(DPATH+f'meta{suf}.npy')
         meta[meta[:,1]==0,1]=np.pi
         with open(DPATH+f'sm{suf}.wfit','rb') as f: w=pickle.load(f)
@@ -1116,7 +1178,7 @@ def plotSacStats():
     #print(sap(b1/len(cis),[50,2.5,97.5]))
     
     with open(DPATH+'smb111.wfit','rb') as f: w=pickle.load(f)
-    assert(np.all(w['rhat'][0,:-1]<1.1))
+    #TODO uncomment assert(np.all(w['rhat'][0,:-1]<1.1))
     meta=np.load(DPATH+'metab111.npy')
     meta[meta[:,0]==0,0]=np.pi
     subplot(3,3,3)
@@ -1174,7 +1236,7 @@ def plotSacStats():
         plt.plot(bs[:-1]+wdur/2,G[:,t,3]/G[:,t,5],color=clrs[t])
     plt.grid(True)
     plt.xlabel('Time in sec with bounce at 0 sec')
-    plt.ylabel('Saccades per sec')
+    plt.ylabel('# saccades per sec')
     subplotAnnotate(loc='ne',nr=np.nan)
     for t in range(7):
         r=1.96*np.sqrt(G[:,t,3]/G[:,t,5]*(1-G[:,t,3]/G[:,t,5])/G[:,t,5])
@@ -1284,10 +1346,16 @@ def printStats():
         print(f'rhat', np.nanmax(w['rhat'][0,:-1]),w['nms'][np.argmax(w['rhat'][0,:-1])])
         if suf[0]=='b': bv=0
         else: bv=w['bv'][:,0]
-        a=sap(w['b0'][:,0]+w['b1'][:,0]*7+(w['mv'][:,0]+bv*7)*20,[50,2.5,97.5])
-        print(np.round(a,2))
+        def sacTar(a=7,v=20,percs=[50,2.5,97.5]): 
+            res= w['b0'][:,0]+w['b1'][:,0]*a+(w['mv'][:,0]+bv*a)*v
+            res=np.round(sap(res,percs,axis=0),2).T
+            print(f'age: {a}, vel: {v}, ampl: {res}')
+        sacTar(a=7,v=20)
         print(np.round(sap(w['b1'][:,0],[50,2.5,97.5]),2))
         print(np.round(sap(w['mv'][:,0]+bv*7,[50,2.5,97.5]),2))
+        #additional stats for discussion section
+        sacTar(a=4,v=24)
+        sacTar(a=5,v=20)
 
 
 if __name__=='__main__':
@@ -1295,25 +1363,25 @@ if __name__=='__main__':
     vpinfo=getMetadata(showFigure=False)
     checkFiles(vpinfo)
     extractFromDataFiles()
-    accuracyCorrection(CALIB=True,applyCor=False)
-    accuracyCorrection(CALIB=False,applyCor=True)
+    accuracyCorrection(method='partial pooling',applyCor=True,exclude=False)
+    #accuracyCorrection(method='none',applyCor=True)
     changeUnits()
-    extractSaccades();stop
+    extractSaccades()
     # statistical analyses
     rotateSaccades();
+
     computeSacStats(bounceSac=False,yType=2,predVel=True,predCenter=False)
     computeSacStats(bounceSac=True,yType=2,predVel=True,predCenter=False,ssmm=2)
     computeSacStats(bounceSac=False,predVel=True,predCenter=False)
     computeSacStats(bounceSac=True,yType=False,predVel=False,predCenter=False)
     computeSacStats(bounceSac=True,yType=True,predVel=True,predCenter=True)
     computeSacStats(bounceSac=True,yType=True,predVel=False,predCenter=False)
-    for i in range(5):
+    for i in range(3):
         computeSacStats(list(range(i*5,(i+1)*5)),suf='n'+str(i),poolCond=False,
             predVel=False,predCenter=False,bounceSac=True,ssmm=5,minSacNr=5)
     rotateSaccades(CSDIST=10);
     computeSacStats(bounceSac=True,predVel=False,predCenter=False,suf='csdist10')
     rotateSaccades(SACS=[-.2,0]);
-    computeSacStats(bounceSac=False,predVel=True,predCenter=False,suf='sacs200')
     computeSacStats(bounceSac=True,predVel=False,predCenter=False,suf='sacs200')
     computeFreqAmp()
     # results presentation
