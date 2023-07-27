@@ -831,7 +831,7 @@ def computeSacStats(tartrl=range(0,25),compileStan=True,suf='',bounceSac=1,
     poolCond=True,pCenter=0,pVelM=1,pVelS=0,yType=1,minSacNr=1,ssmm=1):
     ''' tartrl - list with ids of trials that will be analyzed, default: all trials
         bounceSac - if 1 analyze bounce saccades, otherwise linear-motion saccades
-        poolCond - pool data across conditions (based on angle of incidence)
+        poolCond - pool data across blocks (based on angle of incidence)
         pCenter - if 1 includes direction of screen center as predictor
         pVelM - if 1 includes velocity as predictor of mean y
         pVelS - if 0 excludes velocity as predictor of variance of y 
@@ -842,7 +842,7 @@ def computeSacStats(tartrl=range(0,25),compileStan=True,suf='',bounceSac=1,
         minSacNr - exclude infants with less than minSacNr of saccades
     '''
     D=loadData()
-    def _prep2dat(prep):
+    def _prep2dat(prep,yType,minSacNr):
         y=[];xi=[];k=-1;sel=[];xc=[];xa=[];phis=[];xv=[];bts=[];stims=[];xo=[];
         for i in range(len(prep)): 
             if len(prep[i])==0: continue
@@ -1016,7 +1016,7 @@ def computeSacStats(tartrl=range(0,25),compileStan=True,suf='',bounceSac=1,
     import stan,pickle
     from matusplotlib import fit2dict
     cd=f'{pCenter}{pVelM}{pVelS}{yType}'
-    dat,meta=_prep2dat(D[10])
+    dat,meta=_prep2dat(D[10],yType,minSacNr)
     np.save(DPATH+'dat'+'lb'[bounceSac]+f'{cd}{suf}',dat,allow_pickle=True)
     np.save(DPATH+'meta'+'lb'[bounceSac]+f'{cd}{suf}',meta)
     if bounceSac==0: 
@@ -1025,12 +1025,14 @@ def computeSacStats(tartrl=range(0,25),compileStan=True,suf='',bounceSac=1,
                 pred=['','+bo*xo[m,k]'][pCenter]+['','+v[k,xi[m]]*xv[m]','+xv[m]*(mv[k]+bv[k]*xa[xi[m]])'][pVelM],
                 std=['sm[k,xi[m]]','sm[k,xi[m]]+vs[k]*xv[m]','sm[k,xi[m]]*pow(xv[m],vs[k])','sm[k,xi[m]]*xv[m]'][pVelS])
             print(ml)
-            smsv=stan.build(model_code=ml)
+            smsv=stan.build(program_code=ml,data=dat,random_seed=SEED)
             with open(DPATH+f'sml{cd}.pkl', 'wb') as f: pickle.dump(smsv, f)
         with open(DPATH+f'sml{cd}.pkl','rb') as f: smsv=pickle.load(f)
-        fit=smsv.sampling(data=dat,chains=NCORE,n_jobs=NCORE,
-            thin=int(max(ssmm*1,1)),iter=int(ssmm*1000),warmup=int(ssmm*500))
-        w=fit2dict(fit)
+        fit=smsv.sample(num_chains=NCORE,num_thin=int(max(ssmm*1,1)),
+        num_samples=int(ssmm*500),num_warmup=int(ssmm*500))
+        converged,nms,rhat=printRhat(fit)
+        w={'nms':nms,'rhat':rhat}
+        for k in fit.keys():w[k]=np.rollaxis(fit[k],-1,0)
         with open(DPATH+f'sml{cd}{suf}.wfit','wb') as f: pickle.dump(w,f,protocol=-1)
         return
 
@@ -1042,16 +1044,13 @@ def computeSacStats(tartrl=range(0,25),compileStan=True,suf='',bounceSac=1,
         with open(DPATH+f'smb{cd}.pkl', 'wb') as f: pickle.dump(sm, f)
     with open(DPATH+f'smb{cd}.pkl','rb') as f: sm=pickle.load(f)
     
-    w=sm.sample(num_chains=NCORE,num_thin=int(max(ssmm*1,1)),
+    fit=sm.sample(num_chains=NCORE,num_thin=int(max(ssmm*1,1)),
         num_samples=int(ssmm*500),num_warmup=int(ssmm*500)) 
-    converged,nms,rhat=printRhat(w)
-    w2={'nms':nms,'rhat':rhat}
-    for k in w.keys():w2[k]=np.rollaxis(w[k],-1,0)
-    with open(DPATH+f'smb{cd}{suf}.wfit','wb') as f: pickle.dump(w2,f,protocol=-1)
+    converged,nms,rhat=printRhat(fit)
+    w={'nms':nms,'rhat':rhat}
+    for k in fit.keys():w[k]=np.rollaxis(fit[k],-1,0)
+    with open(DPATH+f'smb{cd}{suf}.wfit','wb') as f: pickle.dump(w,f,protocol=-1)
     
-    
-    
-
 def plotExpl():
     from matusplotlib import subplotAnnotate,subplot
     import pylab as plt
@@ -1446,7 +1445,7 @@ def computeFreqAmp():
     np.save(DPATH+'G',G)
     plt.savefig(FPATH+'suppSacTime.png',dpi=400,bbox_inches='tight',pad_inches=0)
     
-def printStats():
+def printStats(sufl='1231',sufb='1131'):
     print('''print sample statistics''')
     from matusplotlib import ndarray2latextable,figure
     import pylab as plt
@@ -1456,10 +1455,9 @@ def printStats():
     R[0,:]=np.array([' ','Nr. Saccades','Mean Velocity','Std Velocity','Nr. Participants','Mean Age','Std Age'])
     R[:,0]=np.array([' ','LM Saccades','Bounce Saccades','  Black','  Blue','  Magenta','  Cyan','  Lime','  Green','  Red'])
     ndarray2latextable(R,decim=[0,0,1,1,0,1,1])
-    stop
     print('''print statistics of linear-motion saccades''')
     from scipy.stats import scoreatpercentile as sap
-    with open(DPATH+f'sml01.wfit','rb') as f: w=pickle.load(f)
+    with open(DPATH+f'sml{sufl}.wfit','rb') as f: w=pickle.load(f)
     w['rhat'][:,w['nms'].tolist().index('bo')]=1
     assert(np.all(w['rhat'][0,:-1]<1.1))
 
@@ -1475,10 +1473,11 @@ def printStats():
     print(np.round(sap(-w['bv'][:,0]*(11-4)*1000,[50,2.5,97.5]),1))
     sacTar(v=0)
     print('''print amplitude stats''')
-    for suf in ['l02','b012']:
+    
+    for suf in ['l'+sufl,'b'+sufb]:
         print(['linear motion','bounce'][suf[0]=='b'])
         with open(DPATH+f'sm{suf}.wfit','rb') as f: w=pickle.load(f)
-        print(f'rhat', np.nanmax(w['rhat'][0,:-1]),w['nms'][np.argmax(w['rhat'][0,:-1])])
+        #TODO print(f'rhat', np.nanmax(w['rhat'][0,:-1]),w['nms'][np.argmax(w['rhat'][0,:-1])])
         if suf[0]=='b': bv=0
         else: bv=w['bv'][:,0]
         def sacTar(a=7,v=20,percs=[50,2.5,97.5]): 
@@ -1624,7 +1623,7 @@ def hypothesisTest(fn='b1131',ML=False,BALANCED=True):
     np.save(DPATH+f'ht{int(ML)}{int(BALANCED)}',p)
 
 if __name__=='__main__':
-    computeSacStats(bounceSac=0,pVelM=1,pVelS=3,yType=1,pCenter=1,ssmm=10);stop
+    computeSacStats(bounceSac=0,pCenter=1,pVelM=2,pVelS=3,yType=0,ssmm=10);stop
     plotSacStats('b1130')
     plotMain();stop
     if False:

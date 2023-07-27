@@ -212,8 +212,8 @@ def subplotAnnotate(loc='nw',nr=None,clr='k',fs=12):
     elif loc=='ne': ofs=[0.9,0.9]
     else: raise ValueError('loc only supports values nw, sw, se and ne')
     ax=plt.gca()
-    #ax.numRows = ax.get_subplotspec().get_geometry()[0]
-    #ax.numCols = ax.get_subplotspec().get_geometry()[1] 
+    ax.numRows = ax.get_subplotspec().get_geometry()[0]
+    ax.numCols = ax.get_subplotspec().get_geometry()[1] 
     if nr is None:
         nr=ax.get_subplotspec().colspan.start*ax.numRows +ax.get_subplotspec().rowspan.start
     elif np.isnan(nr):nr=ax.get_subplotspec().rowspan.start*ax.numCols+ax.get_subplotspec().colspan.start
