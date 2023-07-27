@@ -57,14 +57,16 @@ def imshow(*args,**kwargs):
 #plt.ion()
 #imshow(np.array([[1,2,3],[2,1,2],[3,1,2]]))
 
-def formatAxes(ax):
-    ax.xaxis.set_ticks_position('none')
-    ax.yaxis.set_ticks_position('none')
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.set_axisbelow(True)
-    ax.grid(False,axis='x')
-    ax.grid(True,axis='y')
+def formatAxes(axs):
+    if not type(axs) is list: axs=[ax]
+    for ax in axs:
+        ax.xaxis.set_ticks_position('none')
+        ax.yaxis.set_ticks_position('none')
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.set_axisbelow(True)
+        ax.grid(False,axis='x')
+        ax.grid(True,axis='y')
     
 def figure(*args,**kwargs):
     ''' wrapper around matplotlib.figure
@@ -210,7 +212,10 @@ def subplotAnnotate(loc='nw',nr=None,clr='k',fs=12):
     elif loc=='ne': ofs=[0.9,0.9]
     else: raise ValueError('loc only supports values nw, sw, se and ne')
     ax=plt.gca()
-    if nr is None: nr=ax.get_subplotspec().colspan.start*ax.numRows+ax.get_subplotspec().rowspan.start
+    #ax.numRows = ax.get_subplotspec().get_geometry()[0]
+    #ax.numCols = ax.get_subplotspec().get_geometry()[1] 
+    if nr is None:
+        nr=ax.get_subplotspec().colspan.start*ax.numRows +ax.get_subplotspec().rowspan.start
     elif np.isnan(nr):nr=ax.get_subplotspec().rowspan.start*ax.numCols+ax.get_subplotspec().colspan.start
     plt.text(plt.xlim()[0]+ofs[0]*(plt.xlim()[1]-plt.xlim()[0]),
             plt.ylim()[0]+ofs[1]*(plt.ylim()[1]-plt.ylim()[0]), 
