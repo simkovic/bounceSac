@@ -58,7 +58,7 @@ def imshow(*args,**kwargs):
 #imshow(np.array([[1,2,3],[2,1,2],[3,1,2]]))
 
 def formatAxes(axs):
-    if not type(axs) is list: axs=[ax]
+    if not type(axs) is list: axs=[axs]
     for ax in axs:
         ax.xaxis.set_ticks_position('none')
         ax.yaxis.set_ticks_position('none')
@@ -107,7 +107,7 @@ def histCI(*args,**kwargs):
     a,b=np.histogram(*args,**kwargs)
     m=b.size
     n=args[0].shape[0]
-    c=stats.norm.ppf(alpha/(2.*m))/2.*(m/float(n))**0.5
+    c=stats.norm.ppf(1-alpha/(2.*m))/2.*(m/float(n))**0.5
     l=np.square(np.maximum(np.sqrt(a)-c,0))
     u=np.square(np.sqrt(a)+c)
     if plot: plothistCI(a,b,l,u)
@@ -204,21 +204,21 @@ def subplot(*args):
     formatAxes(ax)
     return ax
 
-def subplotAnnotate(loc='nw',nr=None,clr='k',fs=12):
+def subplotAnnotate(loc='nw',nr=None,clr='k',fs=12,ax=None):
     if type(loc) is list and len(loc)==2: ofs=loc
     elif loc=='nw': ofs=[0.1,0.9]
     elif loc=='sw': ofs=[0.1,0.1]
     elif loc=='se': ofs=[0.9,0.1]
     elif loc=='ne': ofs=[0.9,0.9]
     else: raise ValueError('loc only supports values nw, sw, se and ne')
-    ax=plt.gca()
+    if ax is None:ax=plt.gca()
     ax.numRows = ax.get_subplotspec().get_geometry()[0]
     ax.numCols = ax.get_subplotspec().get_geometry()[1] 
     if nr is None:
         nr=ax.get_subplotspec().colspan.start*ax.numRows +ax.get_subplotspec().rowspan.start
     elif np.isnan(nr):nr=ax.get_subplotspec().rowspan.start*ax.numCols+ax.get_subplotspec().colspan.start
-    plt.text(plt.xlim()[0]+ofs[0]*(plt.xlim()[1]-plt.xlim()[0]),
-            plt.ylim()[0]+ofs[1]*(plt.ylim()[1]-plt.ylim()[0]), 
+    x=ax.get_xlim();y=ax.get_ylim()
+    ax.text(x[0]+ofs[0]*(x[1]-x[0]),y[0]+ofs[1]*(y[1]-y[0]), 
             str(chr(65+nr)),horizontalalignment='center',verticalalignment='center',
             fontdict={'weight':'bold'},fontsize=fs,color=clr)
 
@@ -524,5 +524,20 @@ def printProgress(iteration, total, time,prefix='', decimals=1, bar_length=30):
     stdout.write('\r%s |%s| %s%s %s' % (prefix, bar, percents, '%', suffix))
     if iteration == total:
         stdout.write('\n')
-    stdout.flush()  
+    stdout.flush()
+    
+    
+def mscorrcoef(x,y,N=0):
+    sel=np.logical_and(~np.isnan(x[:,0]),~np.isnan(y[:,0]))
+    r=np.corrcoef(x[sel],y[sel])[0,1]
+    z=np.log((1+r)/(1-r))/2
+    l=z-(1.96/(sel.sum()-3)**0.5)
+    u=z+(1.96/(sel.sum()-3)**0.5)
+    l=(np.exp(2*l)-1)/(np.exp(2*l)+1)
+    u=(np.exp(2*u)-1)/(np.exp(2*u)+1)
+    if N==0: return r,l,u,sel.sum()
+    res=np.zeros(N)
+    for i in range(N):
+        res[i]= np.corrcoef(np.random.permutation(x[sel]),y[sel])[0,1] 
+    return r,l,u,sel.sum(),np.median(res)
 

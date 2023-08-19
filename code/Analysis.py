@@ -49,17 +49,41 @@ def printRhat(w):
     return i.size>0,nms,rhat
 
 
+##########################################################
+#
+# DATA PREPROCESSING
+#
+##########################################################
+
 # preprocessed information is put in variable D which is saved as 
-# multiple file in the data folder, use D=loadData() to load D
-# D[6][i] is a ndarray with Sx10 element where S is the number of 
+# multiple fileS in the data folder, use D=loadData() to load D
+# D[3] is a ndarray with Nx25x9 elements, stores trial information
+#   columns are: 0= trial start in s, 1= trial end in s, 
+#   2= if 1 trial was interrupted by experimenter otherwise 0, 
+#   3=circle's nominal velocity deg/s,4-6=velocity-adjustment parameters, 
+#   7-8= the index of D[4][n] when trial started and ended 
+# D[4][n] is a ndarray with Tx12 elements
+#   stores T gaze measurements up-sampled (nearest-neighbour) to 120 hz (monitor rate) 
+#   columns are: 0= trial id (-1 = no trial shown),1-time of gaze measurment in sec.,
+#   2=trial frame (1 to 1200), 3-6 gaze left eye x,y and right eye x,y, 
+#   7-8= gaze both eyes x,y, 9-10= circle's position, 3-10 in deg of visual 
+#   angle with origin at screen center, 11=circle's direction in rad
+# D[5][n] is a ndarray with Nx6 elements, stores saccade exclusion stats
+#   columns are: 0=total count,1=minus sacs outside trials,
+#   2=minus sacs from interrupted trials,3=minus sacs too long, 
+#   4=minus too far away from circle,4=minus multiple bounces,
+#   5=minus lm sacs = bounce sacs
+# D[6][n] is a ndarray with Sx10 elements where S is the number of 
 #   events extracted by remodnav, columns are: 0 - event typ (0=saccade),
 #   1 - time when event started (in sec since start of experiment)
 #   2 - time when event ended (in sec since start of experiment)
-# D[9][i] is a ndarray with Sx14 elements where S is the number of bounces
+# D[9][n] is a ndarray with Sx14 elements where S is the number of bounces
 #   watched by participant i; 0- time when bounce occured; 1-trial; 
 #   2- frame; 3-motion type; 4,5-bounce location;
 #   6,7-old stim-movement direction; 8-13-new stim-movement direction assuming 
 #   physics-based, inverted or 90-deg bounce
+# D[10][n] is ndarray with Sx14 elements, stores catch-up saccades+circle info
+#   columns are: 0-1= gaze pos rel to bounce origin, 2= angle of phys bounce, 3= velocity, 4= trial id, 5-6= stim rel to bounce origin, 7-8= gaze pos rel to stim pos, 9-10= location of origin, 11= saccade amplitude, 12-13= sac end relative to when bounce ocurred
 def checkCollision(pos,vel,collisionType,verbose=False):
     walls=[[[-23.6385, 12.9285], [23.6385, 12.9285]], 
            [[23.6385, 12.9285], [23.6385, -12.9285]], 
@@ -101,17 +125,17 @@ def checkCollision(pos,vel,collisionType,verbose=False):
                 return pos1,vel1
     return pos1, vel1
 def saveData(D,ddir='data/',nm='D'):
-    for k in range(4):
+    for k in list(range(4))+[5]:
         np.save(ddir+nm+'%d'%k,D[k])
-    for k in range(4,11):
+    for k in [4]+list(range(6,11)):
         for i in range(len(D[k])):
             if D[k][i] is None: continue
             np.save(ddir+nm+'%d_%03d'%(k,i),D[k][i]) 
 def loadData(ddir='data/',nm='D'):
     R=[[],[],[],[],[],[],[],[],[],[],[]]
-    for k in range(4):
+    for k in list(range(4))+[5]:
         R[k]=np.load(ddir+nm+'%d.npy'%k)
-    for k in range(4,11):
+    for k in [4]+list(range(6,11)):
         for i in range(R[0].shape[0]):
             R[k].append(None)
             try: R[k][-1]=np.load(ddir+nm+'%d_%03d.npy'%(k,i))
@@ -315,7 +339,6 @@ def extractFromDataFiles():
                 assert(len(D[9][i][-1])==14)
         D[9][i]=np.array(D[9][i])
         D[9][i][:,6:]*=120#dg per sec
-        #np.save('stim/%03d'%i,stim);continue
         #merge ET data and stim coords
         trl=-1;D[4][-1]=[]
         trid=np.unique(stim[:,1]).tolist()+[-1]
@@ -378,6 +401,7 @@ def extractFromDataFiles():
     D[1]=np.array(D[1])
     D[2]=np.array(D[2])
     D[3]=np.array(D[3])
+    D[5]=np.zeros(0)#reserved for rotateSaccades
     saveData(D)
     
 def partialPooling(dat,compileStan=True,runStan=False,ssmm=1):
@@ -642,7 +666,7 @@ def extractSaccades():
         tmp=np.copy(D[4][i][:,GBX])
         # interpolate to regular intervals using nearest-neighbour method
         # interpolate nans
-        sel=np.ones(tmp.size,dtype=np.bool)
+        sel=np.ones(tmp.size,dtype=np.bool_)
         eg=tseries2eventlist(np.isnan(tmp))
         for ev in eg:
             if ev[1]-ev[0]<MBD*D[0][i,METHZ]:
@@ -686,9 +710,11 @@ def extractSaccades():
                 #    ev[4]=lst[0]
                 evs2.append(ev+[0,np.nan,np.nan,np.nan,np.nan])
         D[6].append(np.array(evs2))
+    saveData(D)
+    return
     # extract events with nslr
     D[5]=[];
-    for i in []:#range(len(D[4])):
+    for i in range(len(D[4])):
         if D[4][i] is None:
             D[5].append(None)
             continue
@@ -719,7 +745,6 @@ def extractSaccades():
                 evs.append(np.concatenate([[cd[sgc[k]]],D[4][i][[a,b],GC],[a,b]]))
         #print(i,e,len(evs))
         D[5].append(np.array(evs))
-    saveData(D)
 
 def plotGaze(D,i,g,xlm=None,showEvents=[]):
     import pylab as plt
@@ -756,30 +781,37 @@ def plotGaze(D,i,g,xlm=None,showEvents=[]):
 
 def rotateSaccades(SACS=0.15,SACE=0,SACMAXL=0.2,CSDIST=7):
     D=loadData()
-    out=[]# 0:2 - gaze pos rel to bounce origin, 2 - angle of phys bounce, 3- velocity, 4 - trial id, 5:7- stim rel to bounce origin, 7:9 - gaze pos rel to stim pos, 9:11- location of origin, 11 - saccade amplitude, 12:14 - sac end relative to when bounce ocurred
+    out=[]
+    D[5]=np.zeros((len(D[4]),8))
     for i in range(len(D[4])):
         out.append([]);
         if D[4][i] is None: continue
         S=D[6][i]
         for j in range(S.shape[0]):
             if not S[j,0]==0:continue # iterate over saccades
-            sacamp=np.linalg.norm(np.diff(D[4][i][np.int32(S[j,3:5]),GBX:GBY+1],axis=0))
             D[6][i][j,5]=0#keep track of sac type for later
             tmp=D[4][i][np.int32(S[j,3:5]),GF]
+            D[5][i,0]+=1
             if tmp[0]==-1 or tmp[1]==-1: continue
+            D[5][i,1]+=1
             if tmp[0]==-1:trl=int(D[4][i][np.int32(S[j,4]),GT])
             else: trl=int(D[4][i][np.int32(S[j,3]),GT])
             if D[3][i][trl,TSKIP]: continue
+            D[5][i,2]+=1
             a=D[4][i][np.int32(S[j,4]),[GBX,GBY]];
+            if np.isnan(a[0]):continue
+            D[5][i,3]+=1
+            if S[j,2]-S[j,1]>SACMAXL:continue
+            D[5][i,4]+=1
             dst=np.linalg.norm(a-D[4][i][np.int32(S[j,4]),[GSTIMX,GSTIMY]])
             if dst>CSDIST:continue
-            
+            D[5][i,5]+=1
             if type(SACS) is list and len(SACS)==2: sel=np.logical_and(S[j,1]-D[9][i][:,0]>SACS[0],S[j,1]-D[9][i][:,0]<SACS[1])
             else: sel=np.logical_and(S[j,1]-D[9][i][:,0]<SACS,S[j,2]-D[9][i][:,0]>SACE)
-            sel=np.logical_and(sel,S[j,2]-S[j,1]<SACMAXL)
             sel=np.logical_and(sel,D[9][i][:,3]>-1)
             # compute physical bounce angle
             if sel.sum()>1:continue
+            D[5][i,6]+=1
             # compute sac target relative to circle's location
             rr=D[4][i][np.int32(S[j,4])-1:np.int32(S[j,4])+1,[GSTIMX,GSTIMY]]
             th2=np.arctan2(rr[1,1],rr[1,0])
@@ -792,13 +824,17 @@ def rotateSaccades(SACS=0.15,SACE=0,SACMAXL=0.2,CSDIST=7):
             rrout=R.dot(rrout).tolist()
             assert(len(rrout)==2)
             assert(np.all(~np.isnan(rrout)))
-            assert(not np.isnan(D[3][i][trl,TOVEL])) 
+            assert(not np.isnan(D[3][i][trl,TOVEL]))
+            sacamp=np.linalg.norm(np.diff(D[4][i][np.int32(S[j,3:5]),GBX:GBY+1],axis=0)) 
+            if np.isnan(sacamp):
+                sacamp=np.linalg.norm(np.diff(D[4][i][[np.int32(S[j,3])+1,np.int32(S[j,4])],GBX:GBY+1],axis=0))     
             if sel.sum()==0: 
                 # put origin at the positive vertical half
                 #if (-th2+2*np.pi+th)%(2*np.pi)>np.pi:gazeRstim[1]= -gazeRstim[1]
                 out[-1].append([np.nan,np.nan,np.nan,D[3][i][trl,TOVEL],trl,np.nan,np.nan]+gazeRstim+rrout+[sacamp,np.nan])
-                D[6][i][j,5:]=np.array([1,-th,rr[1,0],rr[1,1],0])
+                D[6][i][j,5:]=np.array([1,-th,rr[1,0],rr[1,1],0])           
                 continue
+            D[5][i,7]+=1
             rp=np.squeeze(D[9][i][sel,:])
             th=np.arctan2(rp[7],rp[6]);thsave=np.copy(th)
             R=np.array([[np.cos(th),np.sin(th)],[-np.sin(th),np.cos(th)]])
@@ -817,7 +853,7 @@ def rotateSaccades(SACS=0.15,SACE=0,SACMAXL=0.2,CSDIST=7):
             phi=np.arctan2(phi[2],phi[1])
             assert(np.isclose(th,np.pi-2*phi) or np.isclose(th,2*phi))
             assert(not np.isnan(th))
-            assert(np.isnan(tmp[0])==np.isnan(tmp[1]))
+            #assert(~np.isnan(tmp[1]))
             D[6][i][j,5:]=np.array([2+int(tmp3[1]<0),th,rp[4],rp[5],rp[0]])
             
             out[-1].append(np.array(tmp.tolist()+[th%np.pi,D[3][i][trl,TOVEL],trl]+tmp2.tolist()+gazeRstim+rrout+[sacamp, S[j,2]-rp[0]]))
@@ -827,42 +863,52 @@ def rotateSaccades(SACS=0.15,SACE=0,SACMAXL=0.2,CSDIST=7):
     D[10]=out
     saveData(D)
 
-def computeSacStats(tartrl=range(0,25),compileStan=True,suf='',bounceSac=1,
-    poolCond=True,pCenter=0,pVelM=1,pVelS=0,yType=1,minSacNr=1,ssmm=1):
-    ''' tartrl - list with ids of trials that will be analyzed, default: all trials
-        bounceSac - if 1 analyze bounce saccades, otherwise linear-motion saccades
-        poolCond - pool data across blocks (based on angle of incidence)
+
+##########################################################
+#
+# DATA ANALYSIS
+#
+##########################################################
+
+def fitRegressionModel(bounceSac=1,
+    pCenter=0,pVelM=1,pVelS=0,yType=1,minSacNr=1,ssmm=1,suf=''):
+    ''' bounceSac - if 1 bounce saccades as outcome, otherwise linear-motion saccades
         pCenter - if 1 includes direction of screen center as predictor
         pVelM - if 1 includes velocity as predictor of mean y
         pVelS - if 0 excludes velocity as predictor of variance of y 
             if 1 uses additive regression model
             if 2 uses multiplicative regression model
-        yType - if 1 returns sac tar with bounce loc as origin
-            if 0 the stim loc is the origin, if 2 takes amplitude as outcome,
+        yType - if 1 returns sac tar with bounce loc as origin; mean sac. targets, anticipated angle
+            if 0 the stim loc is the origin; motion-parallel displacement
+            if 2 takes amplitude as outcome; amplitude
         minSacNr - exclude infants with less than minSacNr of saccades
+        ssmm - scale of STAN-simulations, 0.1 => 50 samples, 10 => 5000 samples
+        suf - suffix added to the name of all ouput files
     '''
     D=loadData()
     def _prep2dat(prep,yType,minSacNr):
-        y=[];xi=[];k=-1;sel=[];xc=[];xa=[];phis=[];xv=[];bts=[];stims=[];xo=[];
+        y=[];xi=[];k=-1;sel=[];xc=[];xa=[];phis=[];xv=[];bts=[];stims=[];xo=[];vp=[]
+        rs=[0,0]
         for i in range(len(prep)): 
             if len(prep[i])==0: continue
             if yType==2: ytar=prep[i][:,11,NA]
-            elif yType==0 or bounceSac==0: ytar=prep[i][:,7:9]
-            else: ytar=prep[i][:,:2]
+            elif yType==1:
+                assert(bounceSac==1)
+                ytar=prep[i][:,:2]
+            elif yType==0: ytar=prep[i][:,[7,8]]
             if bounceSac==1: sel2= ~np.isnan(prep[i][:,2])
-            else: sel2= np.isnan(prep[i][:,2])
-            sel2=np.logical_and(sel2,~np.isnan(ytar[:,0]))
-            sel2=np.logical_and(sel2,np.isin(prep[i][:,4],tartrl))
+            else: sel2= np.isnan(prep[i][:,2])  
+            if yType==2: sel2=np.logical_and(sel2,~np.isnan(ytar[:,0]))
             if sel2.sum()<minSacNr:continue
             k+=1
+            vp.append(D[0][i,[MVPID,MCOH]])
             xa.append(D[0][i,MAGE]/30) 
             y.append(ytar[sel2,:])
             xi.append(k*np.ones(sel2.sum()));
             th=np.round(prep[i][sel2,2],4)
             trl=np.int32(prep[i][sel2,4]/5)
             bt=np.array(CC)[np.array(CB[D[0][i,MCOND]])[trl]][:,0]
-            if not poolCond:xc.append(D[0][i,MCOND]*np.ones(sel2.sum())*10+th)
-            else: xc.append(th+bt*10)
+            xc.append(th+bt*10)
             bts.append(bt)
             xv.append(prep[i][sel2,3])
             phis.append(np.round(prep[i][sel2,2],4))
@@ -874,14 +920,11 @@ def computeSacStats(tartrl=range(0,25),compileStan=True,suf='',bounceSac=1,
         xi=np.int32(np.concatenate(xi))+1;xv=np.concatenate(xv,0);
         xc=np.concatenate(xc,0)+100;xo=np.concatenate(xo,0);
         xa=np.array(xa)
-        #print(np.unique(xc));bla
         k=np.unique(xc).tolist()
-        K=y.shape[1]
-        #y=np.squeeze(y)
-        print('M=',xi.size)
-        #np.save('xi',xi);stop
         if bounceSac==0:
-            dat={'N':len(xa),'xa':xa,'M':xi.size,'K':K, 'xi':xi,'y':y,'xv':xv,'xo':xo}
+            xc=np.int32(np.ones(xi.shape))
+            dat={'N':len(xa),'xa':xa,'M':xi.size,'K':xo.shape[1],'KK':y.shape[1],
+            'xi':xi,'y':y,'xv':xv,'xo':xo,'xc':xc,'L':np.max(xc),'vp':np.array(vp)}
             meta=[-1,-1,-1,-1,-1,xi.size, 
                 xv.mean(),xv.std(),xa.size,xa.mean(),xa.std()]
             return dat,meta
@@ -894,512 +937,76 @@ def computeSacStats(tartrl=range(0,25),compileStan=True,suf='',bounceSac=1,
             j=sel.nonzero()[0]
             vpps=np.unique(xi[sel])
             assert(len(np.unique(phis[j]))==1)
-            print(xa.shape,vpps)
             meta.append([k[i]-100,phis[j[0]],bts[j[0]]]+stims[sel,:].mean(0).tolist()+
                 [sel.sum(),xv[sel].mean(),xv[sel].std(),vpps.size,
                 xa[vpps-1].mean(),xa[vpps-1].std()])
         meta.append([-1,-1,-1,-1,-1,xi.size,xv.mean(),xv.std(),xa.size,xa.mean(),xa.std()])
         xc=np.int32(xc)+1
-        #sel=xc==1
-        #xc=xc[sel];xi=xi[sel];xv=xv[sel];y=y[sel,:];xo=xo[sel,:]
-        if yType==2: xc[:]=1
+        if yType==2: xc[:]=1 #pool across conditions
         assert(xi.shape[0]==y.shape[0])
-        dat={'N':xa.size,'xa':xa,'M':xi.size,'xi':xi,'K':K,
-            'y':y,'xc':xc,'L':np.max(xc),'xv':xv,'xo':xo}
+        dat={'N':xa.size,'xa':xa,'M':xi.size,'xi':xi,'K':xo.shape[1],'KK':y.shape[1],
+            'y':y,'xc':xc,'L':np.max(xc),'xv':xv,'xo':xo,'vp':np.array(vp)}
         return dat,meta
-
-    mdlb='''
+   
+    mdl='''
         data{{
-            int N;int M;int L;int K;
+            int N;int M;int L;int K;int KK;
             vector[N] xa;
             int<lower=1> xi[M];
             int<lower=1,upper=L> xc[M];
-            real y[M,K];real xo[M,K];
-        }} parameters{{
-            real<lower=-20,upper=20> b0[L,K];
-            real<lower=-5,upper=5> b1[L,K];
-            real<lower=-50,upper=50> g[L,K,N];
-            real<lower=-20,upper=20> bo;
-            real<lower=0,upper=30> sn[K];
-            real<lower=0,upper=40> sm[L,K,N];
-            real<lower=0,upper=100> gsm[L,K,2];
-        }}model{{
-            for (k in 1:K){{
-                //sn[k]~cauchy(0,sK[3]);
-                for (n in 1:N){{
-                    for (l in 1:L)
-                        sm[l,k,n]~gamma(gsm[l,k,1],gsm[l,k,2]);
-                        g[l,k,n]~normal(b0[l,k]+b1[l,k]*xa[n],sn[k]);
-                }}    
-                for (m in 1:M) y[m,k]~normal(g[xc[m],k,xi[m]]{pred},{std});
-            }}
-        }}
-        '''
-        
-    mdlbv='''
-        data{{
-            int N;int M;int L;int K;
-            vector[N] xa;
-            int<lower=1> xi[M];
-            int<lower=1,upper=L> xc[M];
-            real y[M,K]; real xo[M,K];real xv[M];  
+            real y[M,KK]; real xo[M,K];real xv[M];  
         }} parameters{{
             real<lower=-10,upper=10> b0[L,K];
             real<lower=-2,upper=2> b1[L,K];
             real<lower=-20,upper=20> g[L,K,N];
-            real<lower=-10,upper=10> bo;
+            real<lower=-10,upper=10> bo; 
             real<lower=0,upper=20> sn[K];
             real<lower=0,upper=30> sm[K,N];
             real<lower=0,upper=300> gsm[K,2];
-            
-            //real<lower=-10,upper=10> v[L,K,N];
             real<lower=-10,upper=10> mv[L,K];
-            real<lower=-10,upper=10> bv[L,K];
-            //real<lower=0,upper=20> vs[L];
-            //real<lower=0,upper=10> sv[L,K];
-            //real<lower=0,upper=100> gsv[2];
-            
+            real<lower=-10,upper=10> bv[K];
+            real<lower=0,upper=20> vs[K];
+            //real<lower=-10,upper=10> v[L,K,N];
+            //real<lower=0,upper=10> sv[K];
         }}model{{
-            for (k in 1:K){{
-                //sn[k]~cauchy(0,sK[3]);
-                //for (l in 1:L){{vs[l,k]~cauchy(0,vss[k]);}}
-                //for (l in 1:L){{
-                //    gsm[l,k,1]~cauchy(0,sgsm);
-                //    gsm[l,k,2]~cauchy(0,sgsm);
-                //    sv[l,k]~gamma(gsv[1],gsv[2]);
-                //}}
+            for (k in 1:KK){{
                 for (n in 1:N){{
                     sm[k,n]~gamma(gsm[k,1],gsm[k,2]);
                     for (l in 1:L){{
-                        //sm[l,k,n]~gamma(gsm[k,1],gsm[k,2]);
                         g[l,k,n]~normal(b0[l,k]+b1[l,k]*xa[n],sn[k]);
-                        //v[l,k,n]~normal(mv[l,k],sv[l,k]); v[xc[m],k,xi[m]]
+                        //v[l,k,n]~normal(mv[l,k],sv[k]);
                 }}}}   
                 for (m in 1:M) y[m,k]~normal(g[xc[m],k,xi[m]]{pred},sm[k,xi[m]]{std});
             }}
         }}
         ''' 
-        
-    mdlL='''
-    data{{
-        int N;int M;int K;
-        vector[N] xa;
-        int<lower=1> xi[M];
-        real xv[M];real y[M,K]; real xo[M,K];
-    }} parameters{{
-        real<lower=-10,upper=10> b0[K];
-        real<lower=-2,upper=2> b1[K];
-        real<lower=-20,upper=20> g[K,N];
-        real<lower=-10,upper=10> bo;
-        real<lower=0,upper=20> sn[K];
-        real<lower=0,upper=30> sm[K,N];
-        real<lower=-2,upper=2> v[K,N];
-        real<lower=-10,upper=10> mv[K];
-        real<lower=0,upper=2> sv[K];
-        real<lower=-10,upper=10> bv[K];
-        real<lower=-3,upper=3> vs[K];
-        real<lower=0,upper=300> gsm[K,2];
-    }}model{{
-        for (k in 1:K){{
-            //vs[k]~cauchy(0,1);
-            //sn[k]~cauchy(0,sK[3]);
-            for (n in 1:N){{
-                sm[k,n]~gamma(gsm[k,1],gsm[k,2]);
-                g[k,n]~normal(b0[k]+b1[k]*xa[n],sn[k]);
-                //v[k,n]~normal(mv[k]+bv[k]*xa[n],sv[k]);
-            }}    
-            for (m in 1:M) y[m,k]~normal(g[k,xi[m]]{pred},{std});
-        }}
-    }}
-    ''' 
- 
     import stan,pickle
-    from matusplotlib import fit2dict
-    cd=f'{pCenter}{pVelM}{pVelS}{yType}'
+    cd='lb'[bounceSac]+f'{pCenter}{pVelM}{pVelS}{yType}{suf}'
     dat,meta=_prep2dat(D[10],yType,minSacNr)
-    np.save(DPATH+'dat'+'lb'[bounceSac]+f'{cd}{suf}',dat,allow_pickle=True)
-    np.save(DPATH+'meta'+'lb'[bounceSac]+f'{cd}{suf}',meta)
-    if bounceSac==0: 
-        if compileStan:
-            ml=mdlL.format(
-                pred=['','+bo*xo[m,k]'][pCenter]+['','+v[k,xi[m]]*xv[m]','+xv[m]*(mv[k]+bv[k]*xa[xi[m]])'][pVelM],
-                std=['sm[k,xi[m]]','sm[k,xi[m]]+vs[k]*xv[m]','sm[k,xi[m]]*pow(xv[m],vs[k])','sm[k,xi[m]]*xv[m]'][pVelS])
-            print(ml)
-            smsv=stan.build(program_code=ml,data=dat,random_seed=SEED)
-            with open(DPATH+f'sml{cd}.pkl', 'wb') as f: pickle.dump(smsv, f)
-        with open(DPATH+f'sml{cd}.pkl','rb') as f: smsv=pickle.load(f)
-        fit=smsv.sample(num_chains=NCORE,num_thin=int(max(ssmm*1,1)),
-        num_samples=int(ssmm*500),num_warmup=int(ssmm*500))
-        converged,nms,rhat=printRhat(fit)
-        w={'nms':nms,'rhat':rhat}
-        for k in fit.keys():w[k]=np.rollaxis(fit[k],-1,0)
-        with open(DPATH+f'sml{cd}{suf}.wfit','wb') as f: pickle.dump(w,f,protocol=-1)
-        return
-
-    if compileStan:
-        ml=mdlbv.format(pred=['','+bo*xo[m,k]'][pCenter]+['','+mv[xc[m],k]*xv[m]','+(mv[xc[m],k]+bv[xc[m],k]*xa[xi[m]])*xv[m]'][pVelM],
-            std=['','+vs[xc[m],k]*xv[m]','*pow(xv[m],vs[xc[m],k])', '*xv[m]','','','','',''][pVelS])
-        print(ml)
-        sm=stan.build(program_code=ml,data=dat,random_seed=SEED)
-        with open(DPATH+f'smb{cd}.pkl', 'wb') as f: pickle.dump(sm, f)
-    with open(DPATH+f'smb{cd}.pkl','rb') as f: sm=pickle.load(f)
+    
+    np.save(DPATH+'dat'+f'{cd}',dat,allow_pickle=True)
+    np.save(DPATH+'meta'+f'{cd}',meta)
+    dat.pop('vp')# don't need this anymore
+    ml=mdl.format(pred=['','+bo*xo[m,k]'][pCenter]+['','+mv[xc[m],k]*xv[m]','+(mv[xc[m],k]+bv[k]*xa[xi[m]])*xv[m]','+v[xc[m],k,xi[m]]*xv[m]'][pVelM],
+        std=['','+vs[k]*xv[m]','*pow(xv[m],vs[xc[m],k])', '*xv[m]','+vs[k]*(11-xa[xi[m]])'][pVelS])
+    print(ml)
+    sm=stan.build(program_code=ml,data=dat,random_seed=SEED)
+    with open(DPATH+f'sm{cd}.pkl', 'wb') as f: pickle.dump(sm, f)
     
     fit=sm.sample(num_chains=NCORE,num_thin=int(max(ssmm*1,1)),
         num_samples=int(ssmm*500),num_warmup=int(ssmm*500)) 
     converged,nms,rhat=printRhat(fit)
     w={'nms':nms,'rhat':rhat}
     for k in fit.keys():w[k]=np.rollaxis(fit[k],-1,0)
-    with open(DPATH+f'smb{cd}{suf}.wfit','wb') as f: pickle.dump(w,f,protocol=-1)
+    with open(DPATH+f'sm{cd}.wfit','wb') as f: pickle.dump(w,f,protocol=-1)
     
-def plotExpl():
-    from matusplotlib import subplotAnnotate,subplot
-    import pylab as plt
-    plt.figure(figsize=(12,7.5))
-    def rotate(p,phi):
-        phi=phi/180*np.pi
-        return np.array(p).dot(np.array([[np.cos(phi),-np.sin(phi)],[np.sin(phi),np.cos(phi)]]))
-    al=20
-    D=[[6,1,40,'k',1,-1],[-4,-8,250,'k',-9,-6],[1,7,113,'k',-1,8],[6,0,45,'m',3,-5,135,90],
-      [0,-9,257,'b',-6,-3,103,0],[0,7,13,'c',8,9,347,0]]
-    for i in range(len(D)):
-        a=np.array(D[i][:2])
-        b=-al*np.array([np.cos(D[i][2]/180*np.pi),np.sin(D[i][2]/180*np.pi)])
-        c=D[i][4:6]
-        G=[[a,a+b,c]]
-        if len(D[i])>6:
-            d=al*np.array([np.cos(D[i][6]/180*np.pi),np.sin(D[i][6]/180*np.pi)])+a
-            e=al*np.array([np.cos(D[i][7]/180*np.pi),np.sin(D[i][7]/180*np.pi)])+a
-            G[0].extend([d,e])
-        G.append(np.array(G[0])-a[np.newaxis,:])
-        G.append(rotate(np.copy(G[1]),D[i][2]).tolist())
-        G.append(np.copy(G[-1]))
-        G[-1][:,1]*=-1
-        for j in range(4):
-            if i<4 and j==3:continue
-            plt.subplot(4,len(D),j*len(D)+1+i)
-            plt.plot([G[j][0][0],G[j][1][0]],[G[j][0][1],G[j][1][1]],color=D[i][3])
-            plt.xlim([-10,10]);plt.ylim([-10,10]);
-            plt.gca().set_aspect(1);
-            if len(G[j])<=3:plt.plot(G[j][0][0],G[j][0][1],'o'+D[i][3])
-            plt.plot(G[j][2][0],G[j][2][1],'x'+D[i][3])
-            plt.gca().set_xticks([]);plt.gca().set_yticks([])
-            if len(G[j])>3:
-                plt.plot([G[j][0][0],G[j][3][0]],[G[j][0][1],G[j][3][1]],'--',color=D[i][3])
-                plt.plot([G[j][4][0],2*G[j][0][0]-G[j][4][0]],[G[j][4][1],2*G[j][0][1]-G[j][4][1]],color='gray',zorder=-1)
-                
-            if j==0:
-                plt.title('Saccade '+str(i+1))
-                plt.xlabel('↓shift↓')
-            elif j==1:plt.xlabel('↓rotate↓')
-            elif j==2 and i>=4: plt.xlabel('↓mirror↓')
-            
-    from matplotlib.patches import Wedge
-    ax=subplot(4,3,10)
-    ss=0.035
-    phi=180-np.arctan(0.4-ss)/np.pi*180
-    ax.add_patch(Wedge([0,ss],0.4,180-phi,90,ec='r',ls='--',fc='none'))
-    ax.add_patch(Wedge([0,ss],0.5,90,phi,ec='r',fc='none'))
-    ax.add_patch(Wedge([0,ss],0.7,10,phi,ec='g',fc='none'))
-
-    #for c in ['r','r--','g']:plt.plot(3,3,c)
-    plt.plot([-1,0],[0.4,ss],'c')
-    plt.plot([1,0],[0.4,ss],'c--')
-    plt.plot([-1,1],[0,0],color='gray',lw=5)
-    plt.legend(['angle of reflection','angle of incidence','saccade angle',
-        'old trajectory','new trajectory','barrier'],ncol=2,loc=[-.1,0.65],fontsize=8)
-    plt.plot([0,0],[ss,2],color='k')
-    plt.plot(0.69,.155,'xg')
-    plt.xlim([-1,1])
-    plt.ylim([0,1.2])
-    ax.set_aspect(1)
-    ax.set_axis_off() 
-    plt.savefig(FPATH+'expl.png',dpi=400,bbox_inches='tight',pad_inches=0)
-
-def plotSacStats(suf='b1131',axs=[]):
-    import pylab as plt
-    from scipy.stats import scoreatpercentile as sap
-    from matusplotlib import figure,subplot,subplotAnnotate
-    a2clr={0.45:'c',1.57:'m',2.69:'blue',3.14:'k',
-           11.57:'lime',12.69:'g',22.69:'r'}
-    def plotSmps(suf,xshift=0,age=np.linspace(4,11,101),mspeed=40,lim=None,crc=False):
-        '''mspeed = speed in deg/s'''
-        cis=[[],[],[],[],[],[],[]]
-        import os.path
-        if not os.path.exists(DPATH+f'sm{suf}.wfit'):return cis
-        meta=np.load(DPATH+f'meta{suf}.npy')
-        meta[meta[:,1]==0,1]=np.pi
-        with open(DPATH+f'sm{suf}.wfit','rb') as f: w=pickle.load(f)
-        if 'rhat' in w.keys():
-            print(f'{suf} max rhat:', np.max(w['rhat'][0,:-1]),w['nms'][0,np.argmax(w['rhat'][0,:-1])])
-            if int(suf[1])==0: w['rhat'][:,w['nms'].tolist().index('bo')]=1
-            #TODO assert(np.all(w['rhat'][0,:-1]<1.1))
-        if int(suf[1]):print(f'{suf}, bo= ',sap(w['bo'],[50,2.5,97.5],axis=0))
-        z=[]
-        b0=w['b0'][:,:,:,NA];b1=w['b1'][:,:,:,NA];
-        if 'mv' in w.keys(): 
-            b2=w['mv'][:,:,:,NA]
-            if suf[2]==2: b2=b2+w['bv'][:,:,:,NA]*age[NA,NA,NA,:]
-        else: b2=0
-        tmp=b0+age[NA,NA,NA,:]*b1+b2*mspeed
-        clrs=[];
-        for k in list(a2clr.keys()):#draw physical bounce trajs
-            o=.1*(k/10)
-            if int(suf[4])==1:plt.plot([o,o+np.cos(k%10)*15],[o,o+np.sin(k%10)*15], '--', c=a2clr[k])
-        if int(suf[4])==0:
-            plt.plot([0,-5],[0,0],color='grey')
-            plt.plot(0,0,'o',color='grey')
-        
-        for k in range(tmp.shape[1]):#draw avg sac target
-            y=tmp[:,k,:,:]
-            a=10*meta[k,2]+np.round(meta[k,1],2)
-            y-= np.array([xshift,0])[NA,:,NA]
-            cis[list(a2clr.keys()).index(a)].append(y)
-            if int(suf[3])==0:
-                d4=np.linalg.norm(y[:,:,0],axis=1)
-                d11=np.linalg.norm(y[:,:,-1],axis=1)
-                print('11m-7m dist= ',a2clr[a],sap(d11-d4,[50,2.5,97.5]))
-            y=np.median(y,0)
-            print(k,a, (a%10)/np.pi*180,a2clr[a])
-            plt.plot(y[0,:],y[1,:],c=a2clr[a])
-            plt.plot(y[0,0],y[1,0],'x',c=a2clr[a])
-            if crc: plt.plot(meta[k,3],meta[k,4],'o',c=a2clr[a])
-            if lim is None:
-                if int(suf[4])==1: 
-                    plt.xlim([-10,10]);
-                    plt.ylim([-4,14]) 
-            else:plt.xlim(lim[0]);plt.ylim(lim[1]) 
-            plt.gca().set_aspect(1)
-        return cis
-        
-    def xy2dphi(x,y,trg=None,percentiles=[50,2.5,97.5]):
-        ''' x,y - coordinates on horizontal and vertical axis
-            trg - the center of the window for angular difference
-        '''   
-        phi=((np.arctan2(y,x)+2*np.pi+(np.pi-trg))%(2*np.pi)-(np.pi-trg))/np.pi*180
-        R=np.array([[np.cos(trg),np.sin(trg)],
-                        [-np.sin(trg),np.cos(trg)]])
-        tmp=np.concatenate([x[:,NA,:],y[:,NA,:]],axis=1)
-        d=R.dot(tmp)[0,:,:]
-        tmp=np.copy(phi)
-        if len(percentiles):
-            d=sap(d,percentiles,axis=0)
-            phi=sap(phi,percentiles,axis=0)
-        return d,phi,tmp
-    def computeDisplacement(x,y):
-        phi=np.mod(360-np.arctan2(np.median(y),np.median(x))/np.pi*180,360)-180
-        phi=np.arctan2(np.median(y),np.median(x))
-        print('phi',phi)
-        dst,r,rd=xy2dphi(x[:,NA],y[:,NA],trg=phi)
-        #print(dst.shape);stop
-        return dst[:,0]
- 
-    sv=len(axs)==0
-    if sv: 
-        fig, axs = plt.subplots(figsize=(12,5),nrows=2, ncols=4)
-        axs=np.reshape(axs,-1)
-
-    print(len(axs))
-    with open(DPATH+f'sm{suf}.wfit','rb') as f: w=pickle.load(f)
-    #TODO uncomment assert(np.all(w['rhat'][0,:-1]<1.1))
-    meta=np.load(DPATH+f'meta{suf}.npy')
-    meta[meta[:,0]==0,0]=np.pi
-    for s in range(2):
-        dd=[w['mv']*10,w['b1']][s]
-        d=sap(dd,[50,2.5,97.5],axis=0)
-        print(d.shape)
-        #print(d[0,2,:],np.median(w['mv']*1000,0)[2,:]);bla
-        for i in range(d.shape[1]):
-            plt.sca(axs[2+s])
-            c=a2clr[np.round(meta[i,0],2)]
-            plt.plot(d[0,i,0],d[0,i,1],'.',color=c)
-            #vs=[[d[0,i,0],d[1,i,1]],[d[2,i,0],d[0,i,1]],
-            #    [d[0,i,0],d[2,i,1]], [d[1,i,0],d[0,i,1]]]
-            #plt.gca().add_patch(plt.Polygon(vs,alpha=0.2,fill=True,fc=c,ec=c))
-            plt.plot([d[0,i,0],d[0,i,0]],d[1:,i,1],alpha=.3,color=c)
-            plt.plot(d[1:,i,0],[d[0,i,1],d[0,i,1]],alpha=.3,color=c)
-            plt.sca(axs[6+s])
-            if int(suf[4])==1: 
-                dst=computeDisplacement(dd[:,i,0],dd[:,i,1])
-            else: dst=sap(d[:,i,0],[50,2.5,97.5])
-            #print(dst.shape);stop
-            k=[3,0,1,2,4,5,6][i]
-            plt.plot(k,dst[0],'.',color=c)
-            plt.plot([k,k],dst[1:],color=c)
-        plt.sca(axs[2+s])
-        plt.grid(False)
-        ax=plt.gca()
-        ax.set_aspect(1)
-        for k in list(a2clr.keys()):#draw physical bounce trajs
-            o=2*(k/10)/1000
-            plt.plot([o,o+np.cos(k%10)*5],[o,o+np.sin(k%10)*5], '--', c=a2clr[k])
-        plt.xlim([-4,4])
-        plt.ylim([-2,4])
-        unt='$\\frac{\\mathrm{deg}}{'+['10 \\mathrm{deg}/s}$','\\mathrm{month}}$'][s]
-        plt.xlabel(unt);
-        plt.ylabel(unt);
-        subplotAnnotate(loc='ne',nr=np.nan)
-        plt.sca(axs[6+s])
-        ax=plt.gca()
-        #if s: plt.ylim([-.5,1.7])
-        #else: plt.ylim([-.100,.500])
-        ax.set_xticks([])
-        #plt.ylim([-.200,.400])
-        if int(suf[4])==0: plt.xlabel('Bounce type');
-        plt.ylabel('Displacement from origin in '+unt);
-        subplotAnnotate(loc='ne',nr=np.nan)
-    
-    for s in range(2):
-        vel=[10,40][s]
-        plt.sca(axs[s])
-        cis=plotSmps(suf,xshift=0,lim=None,crc=0,mspeed=vel)
-        plt.grid(False)
-        #plt.xlabel('Degrees of visual angle');plt.ylabel('Degrees of visual angle')
-        #plt.xlim([-10,10]);plt.ylim([-4,14]);
-        subplotAnnotate(loc='ne',nr=np.nan)
-    
-        age=np.linspace(4,10,101)
-        b1=0;xtcks=[]
-        
-        for i in range(len(cis)):
-            d=np.array(cis[i])[0,:]
-            if i<4:trg=list(a2clr.keys())[i]
-            else: trg=[np.pi,np.pi,np.pi/2][i-4]
-            clr=list(a2clr.values())[i]
-            #print(i,trg,clr)
-            plt.sca(axs[s+4])
-            if int(suf[4])==0: 
-                r=sap(d[:,0,:],[50,2.5,97.5],axis=0)
-                k=[3,0,1,2,4,5,6][i]
-                bbb=r.shape[1]//2
-                plt.plot(k,r[0,bbb],'.',color=clr)
-                plt.plot([k,k],r[1:,bbb],color=clr)
-            else:
-                dst,r,rd=xy2dphi(d[:,0,:],d[:,1,:],trg)
-                r=180-r
-                plt.plot([i-.5,i+.5],[180-trg/np.pi*180,180-trg/np.pi*180],':',c=clr)
-            #plt.plot(i,r[0,r.shape[1]//2],'o',c=clr)
-            #plt.plot([i,i],[r[2,r.shape[1]//2],r[1,r.shape[1]//2]],c=clr)
-                gap=.2
-                x=(age-4)/7*(1-gap)+i-.5+gap/2
-                xtcks.extend([x[0],x[x.size//2],x[-1]])
-                plt.plot(x,r[0,:],c=clr)
-                u=r[2,:];l=r[1,:]
-                xx=np.concatenate([x,x[::-1]])
-                ci=np.concatenate([u,l[::-1]])
-                plt.gca().add_patch(plt.Polygon(np.array([xx,ci]).T,
-                            alpha=0.2,fill=True,fc=clr,ec=clr));
-        ax=plt.gca()
-        if int(suf[4])==1: 
-            plt.ylim([-60,180])
-            ax.set_yticks([-45,0,45,90,135,180])
-            if s==0:plt.ylabel('Anticipated Angle in Degrees');
-        else:
-            tmp=np.max(np.abs(plt.ylim()))
-            plt.ylim([-tmp,tmp])
-            if s==0:plt.ylabel('XX Displacement along Circle\'s Trajectory');
-            plt.xlabel('Bounce Type')
-        ax.set_xticks([])
-        plt.grid(True,axis='y')
-        subplotAnnotate(loc='ne',nr=np.nan)
-        
-    if sv:plt.savefig(FPATH+suf+'.png',dpi=400,bbox_inches='tight',pad_inches=0)
-
-
-def plotMain():
-    import pylab as plt
-    fig, discax = plt.subplots(figsize=(12,12),nrows=3, ncols=3)
-    discax=np.reshape(discax,-1).tolist()
-    fig, axs = plt.subplots(figsize=(12,9),nrows=3, ncols=4)
-    from matusplotlib import formatAxes
-    axs=np.reshape(axs,-1).tolist()
-    formatAxes(axs)
-    plotSacStats('b1131',axs=axs[:3]+[discax[0]]+axs[4:8]) 
-    plotSacStats('b1130',axs=discax[:4]+axs[8:]) 
-    plt.savefig(FPATH+'predsac.png',dpi=400,bbox_inches='tight',pad_inches=0)
-    
-def plotSacfrequency(axs=[]):
-    sv=len(axs)==0
-    if sv: 
-        fig, axs = plt.subplots(figsize=(12,5),nrows=2, ncols=4)
-        axs=np.reshape(axs,-1)
-    plt.figure()
-    G=np.load(DPATH+'G.npy')
-    bs=np.linspace(-0.3,0.7,101);wdur=(bs[-1]-bs[0])/(bs.size-1)
-    clrs=['k','b','m','c','g','lime','r']
-    for t in range(7):
-        plt.plot(bs[:-1]+wdur/2,G[:,t,3]/G[:,t,5],color=clrs[t])
-    plt.grid(True)
-    plt.xlabel('Time in sec with bounce at 0 sec')
-    plt.ylabel('# saccades per sec')
-    #subplotAnnotate(loc='ne',nr=np.nan)
-    for t in range(7):
-        r=1.96*np.sqrt(G[:,t,3]/G[:,t,5]*(1-G[:,t,3]/G[:,t,5])/G[:,t,5])
-        print(np.nanmin(r),np.nanmax(r))   
-    plt.savefig(FPATH+'sacFreq.png',dpi=400,bbox_inches='tight')  
-
-def plotSupplement(compute=True):
-    from matusplotlib import ndarray2latextable,figure
-    import pylab as plt
-    D=loadData()
-    R=np.zeros((6,5),dtype=np.int32)
-    for i in range(D[0].shape[0]):
-        R[D[0][i,MCOND]+1,int((D[0][i,MCOH]-4)/3)+1]+=1
-    R.T
-    R[:,-1]=R.sum(1)
-    R[:,0]=np.arange(6)
-    R=R.astype(object)
-    R[0,:]=np.array(['Group','Age 4.0-5.5 m.','Age 5.5-8.5 m.','Age 8.5-11.0 m.','Total'])
-    ndarray2latextable(R.T,decim=0)
-    
-    figure()
-    xi=np.load('xi.npy')
-    a,b=np.histogram(xi,bins=np.sort(np.unique(xi)))
-    N=410-np.unique(xi).size
-    a,b=np.histogram(a.tolist()+[0]*N,bins=np.linspace(-5,80,18)+0.5)
-    plt.bar(b[:-1]+4.5-2.5,a,width=5,ec='w')
-    plt.gca().set_xticks(b[:-1]+4.5);
-    plt.ylabel('Nr. of infants')
-    plt.xlabel('Nr. of bounce saccades per infant')
-    plt.savefig(FPATH+'suppHist.png',dpi=400,bbox_inches='tight',pad_inches=0)
-    
-    return 
-    #TODO
-    cs=[]#TODO move suplement method
-    figure(figsize=[12,15])
-    for i in [0,1,2,3,4]:
-        for h in range(2):
-            subplot(5,2,1+h+2*i)
-            plt.grid(False)
-            cis=plotSmps('b001n'+str(i),xshift=[0,-XSHIFT][h])
-        cs.append(cis)
-    plt.savefig(FPATH+'predsacBlock.png',dpi=400,bbox_inches='tight',pad_inches=0)
-    
-    clrs='rgbkc'
-    for k in range(5):
-        subplot(2,3,4)
-        spd=[5,10,20,30,40][k]
-        cis=plotSmps(suf,xshift=0,lim=None,crc=0,mspeed=spd)
-        
-        rds=[]
-        for i in range(len(cis)):
-            d=np.array(cis[i])[0,:]
-            dst,r,rd=xy2dphi(d[:,0,:],d[:,1,:],trg)
-            rd=(180-trg/np.pi*180)-(180-rd)
-            rds.append(rd)
-        subplot(2,3,6)
-        m=np.abs(rds).mean(0).mean(0)
-        u=sap(np.abs(rds).mean(0),97.5,axis=0)
-        plt.plot(age,m,color=clrs[k])
-        plt.plot(age, u,':'+clrs[k])
-        print(spd,m[m.size//2],u[m.size//2])
-
 def computeFreqAmp():
     import pylab as plt
     D=loadData()
     plt.figure(figsize=(16,9))
-    bs=np.linspace(-0.3,0.7,101)
+    bs=np.linspace(-0.3,0.7,51)
     wdur=(bs[-1]-bs[0])/(bs.size-1)
-    G=np.zeros((len(bs)-1,7,7))
+    G=np.zeros((len(D[6]),len(bs)-1,7,7))*np.nan
     for i in range(len(D[6])):
         if D[6][i] is None: continue
         #determine bounce type
@@ -1422,15 +1029,18 @@ def computeFreqAmp():
                 m=[D[6][i][:,1],D[6][i][:,2],D[6][i][:,1:3].mean(axis=1)][j]
                 temp=(m[sel,NA]-D[9][i][NA,tmp==t,0]).flatten()
                 a,b=np.histogram(temp,bins=bs,density=False)
-                G[:,t,j]+=a/wdur 
+                G[i,:,t,j]=a/wdur 
             for k in range(len(bs)-1):
                 of=wdur/2+bs[k]
                 a=np.logical_and(D[9][i][NA,tmp==t,0]+of>D[6][i][sel,NA,1],
-                    D[9][i][NA,tmp==t,0]+of<D[6][i][sel,NA,2])    
-                G[k,t,3]+=np.nansum(a/dur[:,NA]*wdur)/wdur#/a.sum(1)[:,NA])
-                G[k,t,4]+=np.nansum(a*ampl[:,NA])
-                G[k,t,6]+=a.sum()
-            G[:,t,5]+=(tmp==t).sum() 
+                    D[9][i][NA,tmp==t,0]+of<D[6][i][sel,NA,2]) 
+                #print(np.nansum(a,0),np.nansum(a,1));stop 
+                G[i,k,t,3]=np.nansum(a)#/a.sum(1)[:,NA])
+                G[i,k,t,4]=np.nansum(a*ampl[:,NA])
+                G[i,k,t,6]=a.shape[1]#a.sum()
+            G[i,:,t,5]=(tmp==t).sum()
+    np.save(DPATH+'G',G) 
+    return
     for h in range(5):    
         plt.subplot(3,2,h+1)
         plt.title(['sac start','sac end','sac mid','occurence','amplitude'][h])
@@ -1442,55 +1052,130 @@ def computeFreqAmp():
         plt.grid(True)
         plt.xlabel('Time in sec, bounce at 0 sec')
         plt.ylabel('Saccades per sec')
-    np.save(DPATH+'G',G)
     plt.savefig(FPATH+'suppSacTime.png',dpi=400,bbox_inches='tight',pad_inches=0)
+
+def hypothesisTest(suf,ML=False,BALANCED=False):
+    from scipy.stats import norm
+    with open(f'data/sm{suf}.wfit','rb') as f: w=pickle.load(f)
+    dat=np.load(f'data/dat{suf}.npy',allow_pickle=True)
+    dat=dict(dat.tolist())
+    na=np.newaxis
+    vels=np.linspace(0,40,81)
+    ages=np.linspace(4,10,61)
+    x=np.linspace(0,20,101)
+    p=np.zeros((ages.size,vels.size,5))
+    angls=[[180]*7,[0]*7,[90]*7,[180,26,90,154,90,154,154],[180,26,90,154,180,180,90]]
+    for h in range(len(angls)):
+        for k in range(len(angls[0])):
+            #print(h,k)
+            angl=angls[h][k]/180*np.pi
+            xx=np.array([np.cos(angl)*x,np.sin(angl)*x]) 
+            if not BALANCED:
+                sel=dat['xc']==k+1
+                mu=dat['y'][sel,:]
+                if ML:
+                    if int(suf[3])==3: sig=np.median(w['sm'],0).T[dat['xi'][sel]-1,:]*dat['xv'][sel,na]
+                    tmp=np.max(norm.logpdf(xx[:,:,na],mu.T[:,na,:],sig.T[:,na,:]).sum(0),0)
+                    p[0,0,h]+=tmp.sum()
+                else:
+                    if int(suf[3])==3: sig=w['sm'][:,:,dat['xi'][sel]-1]*dat['xv'][na,na,sel]
+                    elif int(suf[3])==4:
+                        #print(w['sm'][:,:,dat['xi'][sel]-1].shape,w['vs'][:,:,na].shape);stop
+                        sig=w['sm'][:,:,dat['xi'][sel]-1]+w['vs'][:,:,na]*(11-dat['xa'][na,na,dat['xi'][sel]-1])
+                    tmp=norm.pdf(xx.T[:,na,:,na],mu.T[na,na,:,:],sig[na,:,:,:])
+                    p[0,0,h]+=np.log(tmp.mean((0,1))).sum()
+                continue
+            for i in range(ages.size):
+                for j in range(vels.size):
+                    age=ages[i]
+                    vel=vels[j]
+                    if ML:
+                        mu=np.median(w['b0'],0)[k,:]+np.median(w['b1'],0)[k,:]*age +np.median(w['mv'],0)[k,:]*vel
+                        if int(suf[3])==3: sig= np.sqrt(np.square(vel*np.median(w['gsm'][:,:,0]/w['gsm'][:,:,1],0))+np.square(np.median(w['sn'],0)))
+                        #TODO use median xx
+                        p[i,j,h]+=np.product(norm.pdf(xx,mu[:,na],sig[:,na]).mean(1))/7
+                    else:
+                        S=w['b0'].shape[0]
+                        for s in range(S):
+                            mu=w['b0'][s,k,:]+w['b1'][s,k,:]*age +w['mv'][s,k,:]*vel
+                            if int(suf[3])==3:sig= np.sqrt(np.square(vel*w['gsm'][s,:,0]/w['gsm'][s,:,1])+np.square(w['sn'][s,:]))
+                            p[i,j,h]+=np.product(norm.pdf(xx,mu[:,na],sig[:,na]).mean(1))/7
+                        #p[i,j,h]/=S does not affect results
+    if not BALANCED: 
+        p=p[0,0,:]
+        p=p-np.max(p)
+        p=np.exp(p)/np.exp(p).sum()
+    np.save(DPATH+f'ht{int(ML)}{int(BALANCED)}',p)
+
+##########################################################
+#
+# FIGURES
+#
+##########################################################
     
-def printStats(sufl='1231',sufb='1131'):
-    print('''print sample statistics''')
-    from matusplotlib import ndarray2latextable,figure
+def plotExplanation(speed=20):
+    from matusplotlib import subplotAnnotate,subplot
     import pylab as plt
-    R=np.zeros((10,7),dtype=object)
-    R[2:,1:]=np.load('data/metab1131.npy')[:,5:][[-1,0,3,2,1,4,5,6],:]
-    R[1,1:]=np.load('data/metal1131.npy')[5:]
-    R[0,:]=np.array([' ','Nr. Saccades','Mean Velocity','Std Velocity','Nr. Participants','Mean Age','Std Age'])
-    R[:,0]=np.array([' ','LM Saccades','Bounce Saccades','  Black','  Blue','  Magenta','  Cyan','  Lime','  Green','  Red'])
-    ndarray2latextable(R,decim=[0,0,1,1,0,1,1])
-    print('''print statistics of linear-motion saccades''')
-    from scipy.stats import scoreatpercentile as sap
-    with open(DPATH+f'sml{sufl}.wfit','rb') as f: w=pickle.load(f)
-    w['rhat'][:,w['nms'].tolist().index('bo')]=1
-    assert(np.all(w['rhat'][0,:-1]<1.1))
+    plt.figure(figsize=(12,7.5))
+    def rotate(p,phi):
+        phi=phi/180*np.pi
+        return np.array(p).dot(np.array([[np.cos(phi),-np.sin(phi)],[np.sin(phi),np.cos(phi)]]))
+    D=[[6,1,40,'k',1,-1],[-4,-8,250,'k',-9,-6],[1,7,113,'k',-1,8],[6,0,45,'m',3,-5,135,90],
+      [0,-9,257,'b',-6,-3,103,0],[0,7,13,'c',8,9,347,0]]
+    for i in range(len(D)):
+        a=np.array(D[i][:2])
+        b=-speed*np.array([np.cos(D[i][2]/180*np.pi),np.sin(D[i][2]/180*np.pi)])
+        c=D[i][4:6]
+        G=[[a,a+b,c]]
+        if len(D[i])>6:
+            d=speed*np.array([np.cos(D[i][6]/180*np.pi),np.sin(D[i][6]/180*np.pi)])+a
+            e=speed*np.array([np.cos(D[i][7]/180*np.pi),np.sin(D[i][7]/180*np.pi)])+a
+            G[0].extend([d,e])
+        G.append(np.array(G[0])-a[np.newaxis,:])
+        G.append(rotate(np.copy(G[1]),D[i][2]).tolist())
+        G.append(np.copy(G[-1]))
+        G[-1][:,1]*=-1
+        for j in range(4):
+            if i<4 and j==3:continue
+            plt.subplot(4,len(D),j*len(D)+1+[3,4,5,0,1,2][i])
+            plt.plot([G[j][0][0],G[j][1][0]],[G[j][0][1],G[j][1][1]],color=D[i][3])
+            plt.xlim([-10,10]);plt.ylim([-10,10]);
+            plt.gca().set_aspect(1);
+            if len(G[j])<=3:plt.plot(G[j][0][0],G[j][0][1],'o'+D[i][3])
+            plt.plot(G[j][2][0],G[j][2][1],'x'+D[i][3])
+            plt.gca().set_xticks([]);plt.gca().set_yticks([])
+            if len(G[j])>3:
+                plt.plot([G[j][0][0],G[j][3][0]],[G[j][0][1],G[j][3][1]],'--',color=D[i][3])
+                plt.plot([G[j][4][0],2*G[j][0][0]-G[j][4][0]],[G[j][4][1],2*G[j][0][1]-G[j][4][1]],color='gray',zorder=-1)
+                
+            if j==0:
+                plt.title('Saccade '+str([3,4,5,0,1,2][i]+1))
+                plt.xlabel('↓shift↓')
+            elif j==1:plt.xlabel('↓rotate↓')
+            elif j==2 and i>=4: plt.xlabel('↓mirror↓')
+            
+    from matplotlib.patches import Wedge
+    ax=subplot(4,3,12)
+    ss=0.035
+    phi=180-np.arctan(0.4-ss)/np.pi*180
+    ax.add_patch(Wedge([0,ss],0.4,180-phi,90,ec='r',ls='--',fc='none'))
+    ax.add_patch(Wedge([0,ss],0.5,90,phi,ec='r',fc='none'))
+    ax.add_patch(Wedge([0,ss],0.7,10,phi,ec='g',fc='none'))
 
-    def sacTar(a=7,v=20,percs=[50,2.5,97.5]): 
-        res= w['b0']+w['b1']*a+(w['bv']*a+w['mv'])*v
-        res=np.round(sap(-res[:,0],percs,axis=0),2).T
-        print(f'age: {a}, vel: {v}, gaze: {res}')
-    sacTar(a=4)
-    sacTar(a=11)
-    sacTar(v=5)
-    sacTar(v=40)
-    print(np.round(sap(-w['mv'][:,0]-w['bv'][:,0]*7,[50,2.5,97.5])*1000,1))
-    print(np.round(sap(-w['bv'][:,0]*(11-4)*1000,[50,2.5,97.5]),1))
-    sacTar(v=0)
-    print('''print amplitude stats''')
+    #for c in ['r','r--','g']:plt.plot(3,3,c)
+    plt.plot([-1,0],[0.4,ss],'c')
+    plt.plot([1,0],[0.4,ss],'c--')
+    plt.plot([-1,1],[0,0],color='gray',lw=5)
+    plt.legend(['angle of reflection','angle of incidence','anticipated angle',
+        'old trajectory','new trajectory','barrier'],ncol=2,loc=[-.1,0.65],fontsize=8)
+    plt.plot([0,0],[ss,2],color='k')
+    plt.plot(0.69,.155,'xg')
+    plt.xlim([-1,1])
+    plt.ylim([0,1.2])
+    ax.set_aspect(1)
+    ax.set_axis_off() 
+    plt.savefig(FPATH+'expl.png',dpi=400,bbox_inches='tight',pad_inches=0)
     
-    for suf in ['l'+sufl,'b'+sufb]:
-        print(['linear motion','bounce'][suf[0]=='b'])
-        with open(DPATH+f'sm{suf}.wfit','rb') as f: w=pickle.load(f)
-        #TODO print(f'rhat', np.nanmax(w['rhat'][0,:-1]),w['nms'][np.argmax(w['rhat'][0,:-1])])
-        if suf[0]=='b': bv=0
-        else: bv=w['bv'][:,0]
-        def sacTar(a=7,v=20,percs=[50,2.5,97.5]): 
-            res= w['b0'][:,0]+w['b1'][:,0]*a+(w['mv'][:,0]+bv*a)*v
-            res=np.round(sap(res,percs,axis=0),2).T
-            print(f'age: {a}, vel: {v}, ampl: {res}')
-        sacTar(a=7,v=20)
-        print(np.round(sap(w['b1'][:,0],[50,2.5,97.5]),2))
-        print(np.round(sap(w['mv'][:,0]+bv*7,[50,2.5,97.5]),2))
-        #additional stats for discussion section
-        sacTar(a=4,v=24)
-        sacTar(a=5,v=20)
-
 def plotTrajectory():
     wx=37.3/2;wy=21/2
     def getBounceLocs(bounceType=2,phi=257,vel=7,initPos=[0,0]):
@@ -1570,101 +1255,362 @@ def plotTrajectory():
             if i==4:plt.title('Block '+str(j+1))
             if j==0:plt.ylabel('Group '+str(i+1))
     plt.tight_layout()
-    plt.savefig(FPATH+'trajectory.png',dpi=400,bbox='tight',pad_inches=0)
+    plt.savefig(FPATH+'trajectory.png',dpi=400,bbox_inches='tight',pad_inches=0)
 
-def hypothesisTest(fn='b1131',ML=False,BALANCED=True):
-    from scipy.stats import norm
-    with open(f'data/sm{fn}.wfit','rb') as f: w=pickle.load(f)
-    dat=np.load(f'data/dat{fn}.npy',allow_pickle=True)
+def plotMST_AA_MPD(suf='b1131',axs=[]):
+    ''' plot mean saccade targets, anticipated angle and motion-parallel displacement'''
+    from scipy.stats import scoreatpercentile as sap
+    a2clr={0.45:'c',1.57:'m',2.69:'blue',3.14:'k',
+           11.57:'lime',12.69:'g',22.69:'r'}
+    def plotSmps(suf,ax,xshift=0,age=np.linspace(4,11,101),mspeed=40,lim=None,crc=False):
+        '''mspeed = speed in deg/s'''
+        cis=[[],[],[],[],[],[],[]]
+        import os.path
+        if not os.path.exists(DPATH+f'sm{suf}.wfit'):return cis
+        meta=np.load(DPATH+f'meta{suf}.npy')
+        meta[meta[:,1]==0,1]=np.pi
+        with open(DPATH+f'sm{suf}.wfit','rb') as f: w=pickle.load(f)
+        z=[]
+        b0=w['b0'][:,:,:,NA];b1=w['b1'][:,:,:,NA];
+        if int(suf[2])>0: 
+            b2=w['mv'][:,:,:,NA]
+            if suf[2]==2: b2=b2+w['bv'][:,:,:,NA]*age[NA,NA,NA,:]
+        else: b2=0
+        tmp=b0+age[NA,NA,NA,:]*b1+b2*mspeed
+        clrs=[];
+        ta=[0.45,1.57,2.69,3.14,3.14,3.14,1.57]
+        for i,k in enumerate(list(a2clr.keys())):#draw physical bounce trajs
+            ox,oy=[(0,0),(0,0),(0,0),(0,0),(0,.3),(0,-.3),(.3,0)][i]
+            if int(suf[4])==1:ax.plot([ox,ox+np.cos(ta[i])*15],[oy,oy+np.sin(ta[i])*15],'--',c=a2clr[k],alpha=0.6)
+        if int(suf[4])==0:
+            ax.plot([0,-5],[0,0],color='grey')
+            ax.plot(0,0,'o',color='grey')
+        
+        for k in range(tmp.shape[1]):#draw avg sac target
+            y=tmp[:,k,:,:]
+            a=10*meta[k,2]+np.round(meta[k,1],2)
+            y-= np.array([xshift,0])[NA,:,NA]
+            cis[list(a2clr.keys()).index(a)].append(y)
+            if int(suf[3])==0:
+                d4=np.linalg.norm(y[:,:,0],axis=1)
+                d11=np.linalg.norm(y[:,:,-1],axis=1)
+                print('11m-7m dist= ',a2clr[a],sap(d11-d4,[50,2.5,97.5]))
+            y=np.median(y,0)
+            #print(k,a, (a%10)/np.pi*180,a2clr[a])
+            ax.plot(y[0,:],y[1,:],c=a2clr[a])
+            ax.plot(y[0,0],y[1,0],'x',c=a2clr[a])
+            if crc: ax.plot(meta[k,3],meta[k,4],'o',c=a2clr[a])
+            if lim is None:
+                if int(suf[4])==1: 
+                    ax.set_xlim([-10,10]);
+                    ax.set_ylim([-4,14]) 
+            else:ax.set_xlim(lim[0]);ax.set_ylim(lim[1]) 
+            ax.set_aspect(1)
+        return cis
+        
+    def xy2dphi(x,y,trg=None,percentiles=[50,2.5,97.5]):
+        ''' x,y - coordinates on horizontal and vertical axis
+            trg - the center of the window for angular difference
+        '''   
+        phi=((np.arctan2(y,x)+2*np.pi+(np.pi-trg))%(2*np.pi)-(np.pi-trg))/np.pi*180
+        R=np.array([[np.cos(trg),np.sin(trg)],
+                        [-np.sin(trg),np.cos(trg)]])
+        tmp=np.concatenate([x[:,NA,:],y[:,NA,:]],axis=1)
+        d=R.dot(tmp)[0,:,:]
+        tmp=np.copy(phi)
+        if len(percentiles):
+            d=sap(d,percentiles,axis=0)
+            phi=sap(phi,percentiles,axis=0)
+        return d,phi,tmp
+    def computeDisplacement(x,y):
+        phi=np.mod(360-np.arctan2(np.median(y),np.median(x))/np.pi*180,360)-180
+        phi=np.arctan2(np.median(y),np.median(x))
+        dst,r,rd=xy2dphi(x[:,NA],y[:,NA],trg=phi)
+        return dst[:,0]
+ 
+    sv=len(axs)==0
+    if sv: 
+        import pylab as plt
+        fig, axs =plt.subplots(figsize=(12,5),nrows=2, ncols=4)
+        axs=np.reshape(axs,-1)
+    with open(DPATH+f'sm{suf}.wfit','rb') as f: w=pickle.load(f)
+    if 'rhat' in w.keys():
+        if not np.all(w['rhat'][0,:-1]<1.1): print(f'WARNING: {suf}, no convergence')
+        print(f'{suf} max rhat:', np.max(w['rhat'][0,:-1]),w['nms'][0,np.argmax(w['rhat'][0,:-1])])
+    meta=np.load(DPATH+f'meta{suf}.npy')
+    meta[meta[:,0]==0,0]=np.pi
+    for s in range(2):
+        dd=[w['mv']*10,w['b1']][s]
+        d=sap(dd,[50,2.5,97.5],axis=0)
+        for i in range(d.shape[1]):
+            ax=axs[2+s]
+            c=a2clr[np.round(meta[i,0],2)]
+            ax.plot(d[0,i,0],d[0,i,1],'.',color=c)
+            ax.plot([d[0,i,0],d[0,i,0]],d[1:,i,1],alpha=.3,color=c)
+            ax.plot(d[1:,i,0],[d[0,i,1],d[0,i,1]],alpha=.3,color=c)
+            ax=axs[6+s]
+            if int(suf[4])==1: dst=computeDisplacement(dd[:,i,0],dd[:,i,1])
+            else: dst=sap(d[:,i,0],[50,2.5,97.5])
+            k=[3,0,1,2,4,5,6][i]
+            ax.plot(k,dst[0],'.',color=c)
+            ax.plot([k,k],dst[1:],color=c)
+        ax=axs[2+s]
+        ax.grid(False)
+        ax.set_aspect(1)
+        ta=[0.45,1.57,2.69,3.14,3.14,3.14,1.57]
+        for i,k in enumerate(list(a2clr.keys())):#draw physical bounce trajs
+            ox,oy=[(0,0),(0,0),(0,0),(0,0),(0,.1),(0,-.1),(.1,0)][i]
+            ax.plot([ox,ox+np.cos(ta[i])*15],[oy,oy+np.sin(ta[i])*15],'--',c=a2clr[k],alpha=0.6)
+        ax.set_xlim([-4,4])
+        ax.set_ylim([-2,4])
+        unt='$\\frac{\\mathrm{deg}}{'+['10 \\mathrm{deg}/s}$','\\mathrm{month}}$'][s]
+        ax.set_xlabel(unt);
+        ax.set_ylabel(unt);
+
+        ax=axs[6+s]
+        ax.set_xticks([])
+        if int(suf[4])==0: ax.set_xlabel('Bounce type');
+        ax.set_ylabel('Displacement from origin in '+unt);
+    from pylab import Polygon
+    for s in range(2):
+        vel=[10,40][s]
+        ax=axs[s]
+        cis=plotSmps(suf,ax,xshift=0,lim=None,crc=0,mspeed=vel)
+        ax.grid(False)
+        ax.set_xlabel('deg');ax.set_ylabel('deg')
+        #plt.xlim([-10,10]);plt.ylim([-4,14]);
+    
+        age=np.linspace(4,10,101)
+        b1=0;xtcks=[]
+        
+        for i in range(len(cis)):
+            d=np.array(cis[i])[0,:]
+            if i<4:trg=list(a2clr.keys())[i]
+            else: trg=[np.pi,np.pi,np.pi/2][i-4]
+            clr=list(a2clr.values())[i]
+            ax=axs[s+4]
+            if int(suf[4])==0: 
+                r=sap(d[:,0,:],[50,2.5,97.5],axis=0)
+                k=[3,0,1,2,4,5,6][i]
+                bbb=r.shape[1]//2
+                ax.plot(k,r[0,bbb],'.',color=clr)
+                ax.plot([k,k],r[1:,bbb],color=clr)
+            else:
+                dst,r,rd=xy2dphi(d[:,0,:],d[:,1,:],trg)
+                r=180-r
+                ax.plot([i-.5,i+.5],[180-trg/np.pi*180,180-trg/np.pi*180],'--',c=clr)
+                gap=.2
+                x=(age-4)/7*(1-gap)+i-.5+gap/2
+                xtcks.extend([x[0],x[x.size//2],x[-1]])
+                ax.plot(x,r[0,:],c=clr)
+                ax.plot(x[0]-.2,180-(list(a2clr.keys())[i]%10)/np.pi*180,'>',c=clr)
+                u=r[2,:];l=r[1,:]
+                xx=np.concatenate([x,x[::-1]])
+                ci=np.concatenate([u,l[::-1]])
+                ax.add_patch(Polygon(np.array([xx,ci]).T,
+                            alpha=0.2,fill=True,fc=clr,ec=clr));
+        if int(suf[4])==1: 
+            ax.set_ylim([-60,180])
+            ax.set_yticks([-45,0,45,90,135,180])
+            if s==0:ax.set_ylabel('Anticipated Angle in Degrees');
+        else:
+            tmp=np.max(np.abs(ax.set_ylim()))
+            ax.set_ylim([-tmp,tmp])
+            if s==0:ax.set_ylabel('Motion-parallel Displacement in deg');
+            ax.set_xlabel('Bounce Type')
+        ax.set_xticks([])
+        ax.grid(True,axis='y')
+        
+    if sv:plt.savefig(FPATH+suf+'.png',dpi=400,bbox_inches='tight',pad_inches=0)
+
+def plotSacFrequency(axs=[],alpha=0.05):
+    sv=len(axs)==0
+    if sv:
+        import pylab as plt 
+        fig, ax = plt.figure()
+    else: ax=axs[0]
+    G=np.load(DPATH+'G.npy')
+    bs=np.linspace(-0.3,0.7,51);wdur=(bs[-1]-bs[0])/(bs.size-1)
+    clrs=['k','b','m','c','g','lime','r']
+    #print(G[:,0,0,3]);stop
+    for t in range(7):
+        ax.plot(bs[:-1]+wdur/2,np.nansum(G[:,:,t,2],0)/np.nansum(G[:,:,t,6],0),color=clrs[t],alpha=0.5)
+    ax.grid(True)
+    ax.set_xlabel('Time in sec with bounce at 0 sec')
+    ax.set_ylabel('# saccades per sec')
+    from scipy import stats
+    for t in  range(7):
+        m=wdur*np.nansum(G[:,:,t,2],0)/np.nansum(G[:,:,t,6],0)
+        #c=stats.norm.ppf(1-alpha/2./G.shape[0])/2*np.sqrt(G.shape[0]/m.sum())
+        #l=np.maximum(np.square(np.sqrt(m)-c),0)
+        #u=np.square(np.sqrt(m)+c)
+        r=stats.norm.ppf(1-alpha/2)*np.sqrt(m*(1-m)/np.nansum(G[:,:,t,6]))
+        h=wdur
+        print(f'sacFreq CI {clrs[t]} {np.max(r)/h:.3f}');
+    if sv: plt.savefig(FPATH+'sacFreq.png',dpi=400,bbox_inches='tight')  
+
+def plotMain(suf):
+    import pylab as plt
+    from matusplotlib import formatAxes, subplotAnnotate
+    fig, discax = plt.subplots(figsize=(12,12),nrows=3, ncols=3)
+    discax=np.reshape(discax,-1).tolist()
+    fig, axs = plt.subplots(figsize=(12,9),nrows=3, ncols=4)
+    axs=np.reshape(axs,-1).tolist()
+    formatAxes(axs)
+    plotSacFrequency(axs=[axs[3]])
+    plotMST_AA_MPD(f'b{suf}1',axs=axs[:3]+[discax[0]]+axs[4:8]) 
+    plotMST_AA_MPD(f'b{suf}0',axs=discax[:4]+axs[8:]) 
+    for ax in axs: subplotAnnotate(loc='ne',nr=np.nan,ax=ax)
+    plt.gcf().tight_layout()
+    plt.savefig(FPATH+f'main{suf}.png',dpi=400,bbox_inches='tight',pad_inches=0)
+
+def plotSupplement(compute=True):
+    from matusplotlib import ndarray2latextable,figure
+    import pylab as plt
+    D=loadData()
+    R=np.zeros((6,5),dtype=np.int32)
+    for i in range(D[0].shape[0]):
+        R[D[0][i,MCOND]+1,int((D[0][i,MCOH]-4)/3)+1]+=1
+    R.T
+    R[:,-1]=R.sum(1)
+    R[:,0]=np.arange(6)
+    R=R.astype(object)
+    R[0,:]=np.array(['Group','Age 4.0-5.5 m.','Age 5.5-8.5 m.','Age 8.5-11.0 m.','Total'])
+    ndarray2latextable(R.T,decim=0)
+    
+    figure()
+    xi=np.load('xi.npy')
+    a,b=np.histogram(xi,bins=np.sort(np.unique(xi)))
+    N=410-np.unique(xi).size
+    a,b=np.histogram(a.tolist()+[0]*N,bins=np.linspace(-5,80,18)+0.5)
+    plt.bar(b[:-1]+4.5-2.5,a,width=5,ec='w')
+    plt.gca().set_xticks(b[:-1]+4.5);
+    plt.ylabel('Nr. of infants')
+    plt.xlabel('Nr. of bounce saccades per infant')
+    plt.savefig(FPATH+'suppHist.png',dpi=400,bbox_inches='tight',pad_inches=0)
+    
+##############################################
+    
+def printStats(suf):
+    np.set_printoptions(suppress=True)
+    print('''print sample statistics''')
+    from matusplotlib import ndarray2latextable,figure
+    from scipy.stats import scoreatpercentile as sap
+    R=np.zeros((10,7),dtype=object)
+    R[2:,1:]=np.load(DPATH+f'metab{suf}1.npy')[:,5:][[-1,0,3,2,1,4,5,6],:]
+    R[1,1:]=np.load(DPATH+f'metal{suf}0.npy')[5:]
+    R[0,:]=np.array([' ','Nr. Saccades','Mean Velocity','Std Velocity','Nr. Participants','Mean Age','Std Age'])
+    R[:,0]=np.array([' ','LM Saccades','Bounce Saccades','  Black','  Blue','  Magenta','  Cyan','  Lime','  Green','  Red'])
+    ndarray2latextable(R,decim=[0,0,1,1,0,1,1])
+    print('hypothesis test')
+    p=np.load('data/ht00.npy')
+    print(f'p(H_inv)={p[0]}, p(H_none)={p[1]},p(H_phys)={p[3]},p(H_true)={p[4]}')
+    print('''standard deviation''')
+    if int(suf[2]) in (1,4):
+        for sf in [f'b{suf}1',f'b{suf}0',f'l{suf}0']:
+            with open(DPATH+f'sm{sf}.wfit','rb') as f: w=pickle.load(f)
+            tmp=w['gsm'][:,:,0]/w['gsm'][:,:,1]
+            for k in range(2):
+                print(f'{sf}, E[sm_{k}|a=10m]= ',np.round(sap(tmp[:,k]+w['vs'][:,k],[50,2.5,97.5],axis=0),2))
+                print(f'{sf}, E[sm_{k}|a=4m]=',np.round(sap(tmp[:,k]+7*w['vs'][:,k],[50,2.5,97.5],axis=0),2))
+            if int(sf[1]):print(f'{sf}, bo= ',sap(w['bo'],[50,2.5,97.5],axis=0)[:,0])
+    print('''motion-parallel displacement''')
+    with open(DPATH+f'sml{suf}0.wfit','rb') as f: w=pickle.load(f)
+    #w['rhat'][:,w['nms'].tolist().index('bo')]=1
+    if 'rhat' in w.keys() and not np.all(w['rhat'][0,:-1]<1.1): 
+        print(f'WARNING: sml{suf}0, no convergence')
+    print(f'sml{suf}0 max rhat:', np.max(w['rhat'][0,:-1]),w['nms'][0,np.argmax(w['rhat'][0,:-1])])
+    def sacTar(a=7,v=20,percs=[50,2.5,97.5]): 
+        res= w['b0']+w['b1']*a +v*[0,w['mv'],w['bv']*a+w['mv'],w['mv']][int(suf[1])]
+        res=np.round(sap(res[:,0,0],percs,axis=0),2).T
+        print(f'age: {a}, vel: {v} out: {res}') 
+    sacTar(a=7,v=20)
+    #sacTar(a=10)
+    #sacTar(v=5)
+    #sacTar(v=40)
+    sacTar(v=0)
+    print('age deg/month:',np.round(sap(w['b1'][:,0,0],[50,2.5,97.5]),2))
+    if int(suf[1])==2: 
+        print(np.round(sap(w['mv'][:,0,0]+w['bv'][:,0,0]*7,[50,2.5,97.5]),2))
+        print(np.round(sap(w['bv'][:,0,0]*(11-4)*1000,[50,2.5,97.5]),1))
+    elif int(suf[1]) in (1,3): 
+        print('vel deg/(10 deg/s):', np.round(sap(w['mv'][:,0,0]*10,[50,2.5,97.5]),2))
+        
+    dat=np.load(DPATH+f'datl{suf}0.npy',allow_pickle=True)
     dat=dict(dat.tolist())
-    na=np.newaxis
-    vels=np.linspace(0,40,81)
-    ages=np.linspace(4,10,61)
-    x=np.linspace(0,20,101)
-    p=np.zeros((ages.size,vels.size,5))
-    angls=[[180]*7,[0]*7,[90]*7,[180,26,90,154,90,154,154],[180,26,90,154,180,180,90]]
-    for h in range(len(angls)):
-        for k in range(len(angls[0])):
-            #print(h,k)
-            angl=angls[h][k]/180*np.pi
-            xx=np.array([np.cos(angl)*x,np.sin(angl)*x]) 
-            if not BALANCED:
-                sel=dat['xc']==k+1
-                mu=dat['y'][sel,:]
-                if ML:
-                    sig= np.median(w['sm'],0).T[dat['xi'][sel]-1,:]*dat['xv'][sel,na]
-                    tmp=np.max(norm.logpdf(xx[:,:,na],mu.T[:,na,:],sig.T[:,na,:]).sum(0),0)
-                    p[0,0,h]+=tmp.sum()
-                else:
-                    sig= w['sm'][:,:,dat['xi'][sel]-1]*dat['xv'][na,na,sel]
-                    tmp=norm.pdf(xx.T[:,na,:,na],mu.T[na,na,:,:],sig[na,:,:,:])
-                    p[0,0,h]+=np.log(tmp.mean((0,1))).sum()
-                continue
-            for i in range(ages.size):
-                for j in range(vels.size):
-                    age=ages[i]
-                    vel=vels[j]
-                    if ML:
-                        mu=np.median(w['b0'],0)[k,:]+np.median(w['b1'],0)[k,:]*age +np.median(w['mv'],0)[k,:]*vel
-                        sig= np.sqrt(np.square(vel*np.median(w['gsm'][:,:,0]/w['gsm'][:,:,1],0))+np.square(np.median(w['sn'],0)))
-                        #TODO use median xx
-                        p[i,j,h]+=np.product(norm.pdf(xx,mu[:,na],sig[:,na]).mean(1))/7
-                    else:
-                        S=w['b0'].shape[0]
-                        for s in range(S):
-                            mu=w['b0'][s,k,:]+w['b1'][s,k,:]*age +w['mv'][s,k,:]*vel
-                            sig= np.sqrt(np.square(vel*w['gsm'][s,:,0]/w['gsm'][s,:,1])+np.square(w['sn'][s,:]))
-                            p[i,j,h]+=np.product(norm.pdf(xx,mu[:,na],sig[:,na]).mean(1))/7
-                        #p[i,j,h]/=S does not affect results
-    if not BALANCED: 
-        p=p[0,0,:]
-        p=p-np.max(p)
-        p=np.exp(p)/np.exp(p).sum()
-    np.save(DPATH+f'ht{int(ML)}{int(BALANCED)}',p)
+    vp=dat['vp'][:,0];coh=(dat['vp'][:,1]-4)//3
+    g=w['g'][:,0,0,:]+w['mv'][:,0,0,NA]*20
+    res=np.zeros((np.max(vp)+1,3,g.shape[0]))*np.nan
+    for i in range(vp.shape[0]):res[vp[i],coh[i],:]=g[:,i]
+    def mscorrcoef(x,y):
+        sel=np.logical_and(~np.isnan(x[:,0]),~np.isnan(y[:,0]))
+        r=np.zeros(x.shape[1])
+        for i in range(x.shape[1]):
+            r[i]= np.corrcoef(x[sel,i],y[sel,i])[0,1] 
+        return r,sel.sum()
+    un,cn=np.unique(vp,return_counts=True)
+    print('n_tot= ',un.size)
+    print('n_twice= ',(cn==2).sum())
+    print('n_twice= ',(cn==3).sum())
+    for i in range(3): print(f'coh {i*3+4}m, n=',(coh==i).sum())
+    
+    for ij in [[0,1],[1,2],[0,2]]:
+        tmp2=mscorrcoef(res[:,ij[0],:],res[:,ij[1],:])
+        tmp=np.round(sap(tmp2[0],[50,2.5,97.5]),2)
+        print(f'cor between coh {ij[0]*3+4}m,{ij[1]*3+4}m: ',tmp,tmp2[1])    
+    print('''print amplitude stats''')
+    for sf in ['l0'+suf[1]+'02','b0'+suf[1]+'02']:
+        print(['linear motion','bounce'][sf[0]=='b'])
+        with open(DPATH+f'sm{sf}.wfit','rb') as f: w=pickle.load(f)
+        assert(np.all(w['rhat'][0,:-1]<1.1))
+        sacTar(a=7,v=20)
+        print('age deg/month:',np.round(sap(w['b1'][:,0,0],[50,2.5,97.5]),2))
+        if int(suf[1])==2:
+            print(np.round(sap(w['mv'][:,0,0]+w['bv'][:,0,0]*7,[50,2.5,97.5]),2))
+            print(np.round(sap(w['bv'][:,0,0]*(11-4),[50,2.5,97.5]),1))
+        elif int(suf[1])==1: print('vel deg/(deg/s):', np.round(sap(w['mv'][:,0,0]*10,[50,2.5,97.5]),2))
+        #additional stats for discussion section
+        sacTar(a=4,v=24)
+        sacTar(a=5,v=20)
 
 if __name__=='__main__':
-    computeSacStats(bounceSac=0,pCenter=1,pVelM=2,pVelS=3,yType=0,ssmm=10);stop
-    plotSacStats('b1130')
-    plotMain();stop
-    if False:
-        # loading and preprocessing
-        vpinfo=getMetadata(showFigure=False)
-        checkFiles(vpinfo)
-        extractFromDataFiles()
-        accuracyCorrection(method='partial pooling',applyCor=True,exclude=False)
-        #accuracyCorrection(method='none',applyCor=True)
-        changeUnits()
-        extractSaccades()
-        # statistical analyses
-        rotateSaccades();
-        # saccade amplitude
-        #computeSacStats(bounceSac=False,yType=2,pVelM=1,pVelS=0,pCenter=0,ssmm=1)
-        #computeSacStats(bounceSac=True, yType=2,pVelM=1,pVelS=0,pCenter=0,ssmm=1)  
-    #printStats()
-    plotSacStats('b1231');stop
-    computeSacStats(bounceSac=1,pVelM=1,pVelS=3,yType=1,pCenter=1,ssmm=10)
-    computeSacStats(bounceSac=0,pVelM=2,pVelS=3,yType=1,pCenter=1,ssmm=10)#sml1121
-    stop;
-    for i in range(3):
-        computeSacStats(list(range(i*5,(i+1)*5)),suf='n'+str(i),poolCond=False,
-            bounceSac=1,pVelM=0,pVelS=0,yType=1,pCenter=0,ssmm=10,minSacNr=2, compileStan=i==0)#smb0001n
-    if False:
-        rotateSaccades(CSDIST=10);
-        computeSacStats(bounceSac=1,pVelM=1,pVelS=2,yType=1,pCenter=1,ssmm=10, suf='csdist10')#sml1121csdist10
-        rotateSaccades(SACS=[-.2,0]);
-        computeSacStats(bounceSac=1,pVelM=1,pVelS=2,yType=1,pCenter=1,ssmm=10, suf='sacs200')#sml1121sacs200
-        #printStats()
-        computeFreqAmp()
-        hypothesisTest(fn='b1131',ML=True,BALANCED=False)
-        hypothesisTest(fn='b1131',ML=False,BALANCED=False)
-        #hypothesisTest(fn='b1131',ML=False,BALANCED=True)
-        #hypothesisTest(fn='b1131',ML=True,BALANCED=True)
-        # results presentation
-        #plotExpl()
-        #plotTrajectory() 
-        #printStats()
-        plotSacStats()
-        #plotSupplement();
+    # loading and preprocessing
+    vpinfo=getMetadata(showFigure=False)
+    checkFiles(vpinfo)
+    extractFromDataFiles()
+    accuracyCorrection(method='partial pooling',applyCor=True,exclude=False)
+    changeUnits()
+    extractSaccades()
+    # main statistical analyses 
+    rotateSaccades()
+    # mean saccade target & anticipated angle
+    fitRegressionModel(bounceSac=1,pCenter=1,pVelM=1,pVelS=4,yType=1,ssmm=10)
+    hypothesisTest(suf='b1141',ML=False,BALANCED=False)
+    # motion-parallel displacement
+    fitRegressionModel(bounceSac=1,pCenter=1,pVelM=1,pVelS=4,yType=0,ssmm=10)
+    fitRegressionModel(bounceSac=0,pCenter=1,pVelM=1,pVelS=4,yType=0,ssmm=10)
+    #bounce saccade frequency
+    computeFreqAmp()
+    # saccade amplitude
+    fitRegressionModel(bounceSac=0,pCenter=0,pVelM=1,pVelS=0,yType=2,ssmm=1)
+    fitRegressionModel(bounceSac=1,pCenter=0,pVelM=1,pVelS=0,yType=2,ssmm=10)
+    # supplementary statistical analyses
+    rotateSaccades(CSDIST=10);
+    fitRegressionModel(bounceSac=1,pCenter=1,pVelM=1,pVelS=4,yType=1,ssmm=10, suf='csdist10')
+    rotateSaccades(SACS=[-.2,0]);
+    fitRegressionModel(bounceSac=1,pCenter=1,pVelM=1,pVelS=4,yType=1,ssmm=10, suf='sacs200')
+    rotateSaccades(SACMAXL=1);
+    fitRegressionModel(bounceSac=1,pCenter=1,pVelM=1,pVelS=4,yType=1,ssmm=10, suf='sacmaxl1')
+    rotateSaccades()
+    # results presentation
+    plotExplanation();stop
+    plotTrajectory() 
+    plotMain('114')
+    printStats('114')
+    # present supplementary analyses
+    plotMST_AA_MPD('b1141sacs200')
+    plotMST_AA_MPD('b1141csdist10')
+    plotMST_AA_MPD('b1141sacmaxl1')
         
     
     
