@@ -57,6 +57,13 @@ def printRhat(w):
 
 # preprocessed information is put in variable D which is saved as 
 # multiple fileS in the data folder, use D=loadData() to load D
+# D[0] is a ndarray with Nx13 elements, the relevant columns are
+#   0= subject id, 1=cohort (4,7 or 10),4=age in days,8=group, 
+# D[2] is a ndarray with Nx11x13 elements, D[2][n,1:9,:] are eye-tracking 
+#       data for each of nine stimuli that were shown during eye-tracker 
+#       calibration, the columns along array's 3rd dimension are 0=time in s,
+#       1-2 location of calibration target 3-6 median gaze left eye x,y 
+#       and right eye x,y
 # D[3] is a ndarray with Nx25x9 elements, stores trial information
 #   columns are: 0= trial start in s, 1= trial end in s, 
 #   2= if 1 trial was interrupted by experimenter otherwise 0, 
@@ -85,6 +92,13 @@ def printRhat(w):
 # D[10][n] is ndarray with Sx14 elements, stores catch-up saccades+circle info
 #   columns are: 0-1= gaze pos rel to bounce origin, 2= angle of phys bounce, 3= velocity, 4= trial id, 5-6= stim rel to bounce origin, 7-8= gaze pos rel to stim pos, 9-10= location of origin, 11= saccade amplitude, 12-13= sac end relative to when bounce ocurred
 def checkCollision(pos,vel,collisionType,verbose=False):
+    '''compute agent's new position and velocity 
+        pos - 2d array with agent's position in deg of visual angle
+        vel - 2d array with agent's velocity in deg/s
+        walls - list of walls, each element is ist a 2d array with coordinates of wall's vertices
+        collisionType - 0=physical bounce, 1=inverse bounce, 2=rectangle bounce
+        returns new position and new velocity
+    '''
     walls=[[[-23.6385, 12.9285], [23.6385, 12.9285]], 
            [[23.6385, 12.9285], [23.6385, -12.9285]], 
            [[23.6385, -12.9285], [-23.6385, -12.9285]], 

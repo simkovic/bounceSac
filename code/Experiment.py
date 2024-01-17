@@ -1,15 +1,15 @@
 from psychopy import visual, gui,parallel,event,misc,core
 from psychopy.misc import pix2deg, deg2pix, cm2deg
 from psychopy.event import getKeys
-from matustools.CameraThread import Camera
 import time, sys,os,datetime
 import numpy as np
+from scipy.stats import scoreatpercentile as sap
 import warnings
 warnings.filterwarnings('ignore')
-from matustools.SMI import  *
-from matustools.psycho import *
-from scipy.stats import scoreatpercentile as sap
-#from matustools.SMI import *
+from matustools.CameraThread import Camera
+from matustools.SMI import  EyeTracker, AttentionCatcher
+from matustools.psycho import QinitDisplay,infoboxBaby,asus
+
 N=128
 CIRCLE=np.ones((N,N))*-1
 for i in range(N):
@@ -17,7 +17,7 @@ for i in range(N):
         if np.sqrt((i-N/2+0.5)**2+(j-N/2+0.5)**2)<N/2:
             CIRCLE[i,j]= 1
 
-class Qpursuit01():
+class Qpursuit01(): #experiment settings
     monitor = asus 
     refreshRate= 120 # hz
     scale=1.53 #multiplier
@@ -35,8 +35,7 @@ class Qpursuit01():
     agInitDir= [[1,0],[0,1],[1,1],[3,13]] # vectors with initial movment direction
     agInitSpeed= 14# initial agent speed 20 for 10m, 8 for 4m
     agInitPos= [[0,0]]*len(agInitDir)#initial agent position
-    #agInitPos[-2]=[10,3]
-    agCount=1 # more agents not implemented
+    agCount=1 # multiple agents not implemented
     # settings for adaptive-velocity policy
     fw=9 # width of ET data filter in frames
     maxDistance=10 # maximum target to gaze distance
@@ -84,18 +83,52 @@ Qpursuit02.agInitDir=agInitDir
 
 Qpursuit03= type('Qpursuit03',Qpursuit02.__bases__,dict(Qpursuit02.__dict__))
 Qpursuit03.collisionHandling=[0,0,1,1,0]
+Qpursuit04= type('Qpursuit04',Qpursuit02.__bases__,dict(Qpursuit02.__dict__))
+Qpursuit04.collisionHandling=[2,2,0,0,2]
+Qpursuit05= type('Qpursuit05',Qpursuit02.__bases__,dict(Qpursuit02.__dict__))
+Qpursuit05.collisionHandling=[0,0,2,2,0]
         
 def checkCollision(pos,vel,walls,collisionType):
+    '''compute agent's new position and velocity 
+        pos - 2d array with agent's position in deg of visual angle
+        vel - 2d array with agent's velocity in deg/s
+        walls - list of walls, each element is ist a 2d array with coordinates of wall's vertices
+        collisionType - 0=physical bounce, 1=inverse bounce, 2=rectangle bounce
+        returns new position and new velocity
+    '''
     vel1=np.copy(vel);pos1=pos+vel
     for w in walls:
         for c in [X,Y]:
             if (np.abs(pos[0,c])>np.abs(w[0][c]) and 
                 w[0][c]==w[1][c] and np.sign(pos[0,c])==np.sign(w[0][c])):
-                vel1[0,c]*=-1
-                if collisionType==1:vel1[0,1-c]*=-1
-                pos1[0,c]=2*w[0][c]-pos[0,c]
+                #backtrack to wall
+                frac=(pos1[0,c]-w[0][c])/vel[0,c]
+                pos1[0,:]=pos1[0,:]-vel[0,:]*frac
+                if verbose: print(pos1,vel1,w[0][c],frac)
+                if collisionType==0:#physical
+                    vel1[0,c]*=-1
+                    pos1[0,c]=2*w[0][c]-pos[0,c]
+                elif collisionType==1:#deg180
+                    vel1[0,:]*=-1
+                elif collisionType==2:#deg90
+                    vel1[0,:]=vel1[0,::-1]
+                    if c==Y and w[0][Y]<0:
+                        if vel[0,X]>0:vel1[0,X]*= -1#GUS
+                        else: vel1[0,Y]*= -1#US
+                    elif c==Y and w[0][Y]>0:
+                        if vel[0,X]<0:vel1[0,X]*= -1#GUS
+                        else: vel1[0,Y]*= -1#US
+                    elif c==X and w[0][X]<0:
+                        if vel[0,Y]<0:vel1[0,X]*= -1#GUS
+                        else: vel1[0,Y]*= -1#US
+                    elif c==X and w[0][X]>0:
+                        if vel[0,Y]>0:vel1[0,X]*= -1#GUS
+                        else: vel1[0,Y]*= -1#US
+                if verbose: print(pos1,vel1)
+                pos1=pos1+vel1*frac
+                if verbose: print(pos1)
                 return pos1,vel1
-    return pos1, vel1 
+    return pos1, vel1
 
 
 def nextSpeed(oldSpeed,step,fracOnTarget,fracPursuit,expID,Q):
@@ -116,7 +149,7 @@ class Experiment():
         self.vpinfo,fn=infoboxBaby((200,400))
         self.expID=self.vpinfo[1]-1
         self.fn='pursuit%02d'%(self.expID+1)+fn
-        self.Q=[Qpursuit01,Qpursuit02,Qpursuit03][self.expID]
+        self.Q=[Qpursuit01,Qpursuit02,Qpursuit03,Qpursuit04,Qpursuit05][self.expID]
         if calibVp is None: calibVp=self.vpinfo[0]
         self.ET=Eyetracker(self.Q.outputPath+self.fn,self.Q.monitor.getDistance(),
             calibVp=calibVp,fcallback=self.getFrameIndex)
@@ -129,7 +162,6 @@ class Experiment():
         lw=deg2pix(self.Q.boxLW,self.Q.monitor)
         self.box=visual.Rect(self.win,width=self.Q.boxSize[X],lineColor=self.Q.boxCLR,
             height=self.Q.boxSize[Y],lineWidth=lw)
-        Qsave(self.Q,self.fn)
         self.out=open(self.Q.outputPath+self.fn+'.res','w')
         self.f=-1
         self.jumpToCalibration=False
