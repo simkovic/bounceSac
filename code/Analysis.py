@@ -454,7 +454,7 @@ def partialPooling(dat,compileStan=True,runStan=False,ssmm=1):
     w=loadStanFit('fitcalib')
     return np.median(w['o'],0),np.median(w['mo'],0)
         
-def accuracyCorrection(method='complete pooling',applyCor=True,exclude=False):
+def accuracyCorrection(method='no pooling',applyCor=True,exclude=False):
     print('Performing linear accuracy correction')
     import ast
     D=loadData()
@@ -478,7 +478,7 @@ def accuracyCorrection(method='complete pooling',applyCor=True,exclude=False):
                     D[2][i,mp[dd]+1,(3+2*h):(5+2*h)]=np.nan
         else:stop
     # compute linear correction based on data from calibration routine
-    if method=='complete pooling':
+    if method=='no pooling':
         for e in range(2):
             g=[]
             for i in range(len(D[2])):
@@ -488,7 +488,7 @@ def accuracyCorrection(method='complete pooling',applyCor=True,exclude=False):
                 coef=[np.nan,np.nan,np.nan,np.nan,np.nan]
                 assert(np.all(np.isnan(c[:,0])==np.isnan(c[:,1])))
                 sel=~np.isnan(c[:,0])
-                if np.isnan(c[:,0]).sum()>5:# don't apply correction when 3 or less calibration locations available
+                if np.isnan(c[:,0]).sum()>6:# don't apply correction when 2 or less calibration locations available
                     D[2][i][[0,-1][e],1:6]=coef
                     continue
                 temp=0
@@ -520,7 +520,7 @@ def accuracyCorrection(method='complete pooling',applyCor=True,exclude=False):
             dat['c']=np.array(dat['c'])
             #print(dat['y'].shape,dat['c'].shape);bla  
             np.save('c',dat['c'])    
-            o,mo=partialPooling(dat,compileStan=False,ssmm=1)
+            o,mo=partialPooling(dat,compileStan=True,ssmm=1)
             for i in range(len(D[2])):
                 if not exclude: D[2][i][[0,-1][e],1:5]=mo
             for k in range(len(dat['id'])):
@@ -1271,14 +1271,16 @@ def plotTrajectory():
     plt.tight_layout()
     plt.savefig(FPATH+'trajectory.png',dpi=400,bbox_inches='tight',pad_inches=0)
 
-def plotMST_AA_MPD(suf='b1131',axs=[]):
+def plotMST_AA_MPD(suf='b1131',mage=7,mspeed=20,axs=[]):
     ''' plot mean saccade targets, anticipated angle and motion-parallel displacement'''
     from scipy.stats import scoreatpercentile as sap
     a2clr={0.45:'c',1.57:'m',2.69:'blue',3.14:'k',
            11.57:'lime',12.69:'g',22.69:'r'}
-    def plotSmps(suf,ax,xshift=0,age=np.linspace(4,11,101),mspeed=40,lim=None,crc=False):
+    def plotSmps(suf,ax,mage=7,mspeed=20,xshift=0,lim=None,crc=False):
         '''mspeed = speed in deg/s'''
         cis=[[],[],[],[],[],[],[]]
+        mage=np.array(mage,ndmin=1)
+        mspeed=np.array(mspeed,ndmin=1)
         import os.path
         if not os.path.exists(DPATH+f'sm{suf}.wfit'):return cis
         meta=np.load(DPATH+f'meta{suf}.npy')
@@ -1288,19 +1290,19 @@ def plotMST_AA_MPD(suf='b1131',axs=[]):
         b0=w['b0'][:,:,:,NA];b1=w['b1'][:,:,:,NA];
         if int(suf[2])>0: 
             b2=w['mv'][:,:,:,NA]
-            if suf[2]==2: b2=b2+w['bv'][:,:,:,NA]*age[NA,NA,NA,:]
+            if suf[2]==2: b2=b2+w['bv'][:,:,:,NA]*mage[NA,NA,NA,:]
         else: b2=0
-        tmp=b0+age[NA,NA,NA,:]*b1+b2*mspeed
+        tmp=b0+mage[NA,NA,NA,:]*b1+b2*mspeed[NA,NA,NA,:]
         clrs=[];
         ta=[0.45,1.57,2.69,3.14,3.14,3.14,1.57]
         for i,k in enumerate(list(a2clr.keys())):#draw physical bounce trajs
             ox,oy=[(0,0),(0,0),(0,0),(0,0),(0,.3),(0,-.3),(.3,0)][i]
-            if int(suf[4])==1:ax.plot([ox,ox+np.cos(ta[i])*15],[oy,oy+np.sin(ta[i])*15],'--',c=a2clr[k],alpha=0.6)
-        if int(suf[4])==0:
+            if int(suf[4])==1 and not ax is None:ax.plot([ox,ox+np.cos(ta[i])*15],[oy,oy+np.sin(ta[i])*15],'--',c=a2clr[k],alpha=0.6)
+        if int(suf[4])==0 and not ax is None:
             ax.plot([0,-5],[0,0],color='grey')
             ax.plot(0,0,'o',color='grey')
         
-        for k in range(tmp.shape[1]):#draw avg sac target
+        for k in range(tmp.shape[1]):#draw mean sac target
             y=tmp[:,k,:,:]
             a=10*meta[k,2]+np.round(meta[k,1],2)
             y-= np.array([xshift,0])[NA,:,NA]
@@ -1311,15 +1313,16 @@ def plotMST_AA_MPD(suf='b1131',axs=[]):
                 print('11m-7m dist= ',a2clr[a],sap(d11-d4,[50,2.5,97.5]))
             y=np.median(y,0)
             #print(k,a, (a%10)/np.pi*180,a2clr[a])
-            ax.plot(y[0,:],y[1,:],c=a2clr[a])
-            ax.plot(y[0,0],y[1,0],'x',c=a2clr[a])
-            if crc: ax.plot(meta[k,3],meta[k,4],'o',c=a2clr[a])
-            if lim is None:
-                if int(suf[4])==1: 
-                    ax.set_xlim([-10,10]);
-                    ax.set_ylim([-4,14]) 
-            else:ax.set_xlim(lim[0]);ax.set_ylim(lim[1]) 
-            ax.set_aspect(1)
+            if not ax is None:
+                ax.plot(y[0,:],y[1,:],c=a2clr[a])
+                ax.plot(y[0,0],y[1,0],'x',c=a2clr[a])
+                if crc: ax.plot(meta[k,3],meta[k,4],'o',c=a2clr[a])
+                if lim is None:
+                    if int(suf[4])==1: 
+                        ax.set_xlim([-10,6]);
+                        ax.set_ylim([-2,6]) 
+                else:ax.set_xlim(lim[0]);ax.set_ylim(lim[1]) 
+                ax.set_aspect(1)
         return cis
         
     def xy2dphi(x,y,trg=None,percentiles=[50,2.5,97.5]):
@@ -1353,48 +1356,90 @@ def plotMST_AA_MPD(suf='b1131',axs=[]):
         print(f'{suf} max rhat:', np.max(w['rhat'][0,:-1]),w['nms'][0,np.argmax(w['rhat'][0,:-1])])
     meta=np.load(DPATH+f'meta{suf}.npy')
     meta[meta[:,0]==0,0]=np.pi
-    for s in range(2):
-        dd=[w['mv']*10,w['b1']][s]
+    
+    
+    if int(suf[2])>0: 
+        b2=w['mv']
+        if suf[2]==2: b2=b2+w['bv']*mage
+    else: b2=0
+    mst=w['b0']+mage*w['b1']+b2*mspeed
+    msts=np.array([[w['b0']+mage*w['b1']+b2*5,w['b0']+mage*w['b1']+b2*40],
+        [w['b0']+4*w['b1']+b2*mspeed,w['b0']+10*w['b1']+b2*mspeed]])
+    ordr=[3,0,1,2,4,5,6]
+    for s in range(3):
+        dd=[mst,w['mv']*10,w['b1']][s]
         d=sap(dd,[50,2.5,97.5],axis=0)
-        for i in range(d.shape[1]):
-            ax=axs[2+s]
+        
+        for i in range(dd.shape[1]):
+            k=ordr[i]
+            ax=axs[s]
             c=a2clr[np.round(meta[i,0],2)]
-            ax.plot(d[0,i,0],d[0,i,1],'.',color=c)
-            ax.plot([d[0,i,0],d[0,i,0]],d[1:,i,1],alpha=.3,color=c)
-            ax.plot(d[1:,i,0],[d[0,i,1],d[0,i,1]],alpha=.3,color=c)
-            ax=axs[6+s]
-            if int(suf[4])==1: dst=computeDisplacement(dd[:,i,0],dd[:,i,1])
-            else: dst=sap(d[:,i,0],[50,2.5,97.5])
-            k=[3,0,1,2,4,5,6][i]
-            ax.plot(k,dst[0],'.',color=c)
-            ax.plot([k,k],dst[1:],color=c)
-        ax=axs[2+s]
+            #ax.plot(d[0,i,0],d[0,i,1],'.',color=c)
+            #ax.plot([d[0,i,0],d[0,i,0]],d[1:,i,1],alpha=.3,color=c)
+            #ax.plot(d[1:,i,0],[d[0,i,1],d[0,i,1]],alpha=.3,color=c)
+            if i<4:trg=list(a2clr.keys())[i]
+            else: trg=[np.pi,np.pi,np.pi/2][i-4]
+            
+            dst,r,rd=xy2dphi(dd[:,i,0,NA],dd[:,i,1,NA],trg)
+            dst,r,rd=xy2dphi(dd[:,i,0,NA],dd[:,i,1,NA],r[0,0]/180*np.pi)
+            NN=101
+            if dst[1,0]>dst[2,0]:stop
+            dsts=np.linspace(dst[1,0],dst[2,0],2)
+            rs=np.mod(np.linspace(r[1,0],r[2,0],NN)/180*np.pi+2*np.pi,2*np.pi)
+            mdist=np.linalg.norm(d[0,i,:])
+            ax.plot(np.cos(rs)*mdist,np.sin(rs)*mdist,c)
+            mang=np.arctan2(d[0,i,1],d[0,i,0])
+            ax.plot(np.cos(mang)*dsts,np.sin(mang)*dsts,c)
+            #r=180-r[:,0]
+            ax=axs[3+s]
+            if False: 
+                if i<4:trg=list(a2clr.keys())[i]
+                else: trg=[np.pi,np.pi,np.pi/2][i-4]
+                
+                dst,r,rd=xy2dphi(dd[:,i,0,NA],dd[:,i,1,NA],trg)
+                
+                if s==0:
+                    vl=180-r[:,0]
+                    clr=a2clr[np.round(meta[ordr.index(i),0],2)]
+                    ax.plot([i-.5,i+.5],[180-trg/np.pi*180,180-trg/np.pi*180],'--',c=clr)
+                    ax.plot(i-.1,180-(list(a2clr.keys())[i]%10)/np.pi*180,'>',c=clr)
+                else:
+                    r=np.arctan2(msts[s-1,:,:,i,1].T,msts[s-1,:,:,i,0].T)
+                    #print(r.shape);stop
+                    r=r[:,1]-r[:,0]
+                    r=((r+2*np.pi+np.pi)%(2*np.pi)-np.pi)/np.pi*180
+                    vl=sap(r,[50,2.5,97.5],axis=0)
+
+                    
+            else: 
+                vl=sap(d[:,i,0],[50,2.5,97.5])
+                ax.plot(k,vl[0],'.',color=c)
+                ax.plot([k,k],vl[1:],color=c)
+        ax=axs[s]
         ax.grid(False)
         ax.set_aspect(1)
         ta=[0.45,1.57,2.69,3.14,3.14,3.14,1.57]
+        scl=[.1,.05,.02][s]
         for i,k in enumerate(list(a2clr.keys())):#draw physical bounce trajs
-            ox,oy=[(0,0),(0,0),(0,0),(0,0),(0,.1),(0,-.1),(.1,0)][i]
-            ax.plot([ox,ox+np.cos(ta[i])*15],[oy,oy+np.sin(ta[i])*15],'--',c=a2clr[k],alpha=0.6)
-        ax.set_xlim([-4,4])
-        ax.set_ylim([-2,4])
-        unt='$\\frac{\\mathrm{deg}}{'+['10 \\mathrm{deg}/s}$','\\mathrm{month}}$'][s]
+        
+            ox,oy=[(0,0),(0,0),(0,0),(0,0),(0,scl),(0,-scl),(scl,0)][i]
+            ax.plot([ox,ox+np.cos(ta[i])*15],[oy,oy+np.sin(ta[i])*15],'--',c=a2clr[k],alpha=0.3)
+        ax.set_xlim([[-6,4],[-3,2],[-.7,.7]][s]);
+        ax.set_ylim([[-2,4],[-1,2],[-.7,.7]][s]) 
+        if s==0:unt='$\\mathrm{deg}$'
+        else: unt='$\\frac{\\mathrm{deg}}{'+['10 \\mathrm{deg}/s}$','\\mathrm{month}}$'][s-1]
         ax.set_xlabel(unt);
         ax.set_ylabel(unt);
-
-        ax=axs[6+s]
-        ax.set_xticks([])
-        if int(suf[4])==0: ax.set_xlabel('Bounce type');
-        ax.set_ylabel('Displacement from origin in '+unt);
+        ax=axs[3+s]
+        ax.set_xticks([]) 
+        if s>0:ax.set_ylabel('Change in displacement in '+unt);
+        else: ax.set_ylabel('Displacement from origin in '+unt);
     from pylab import Polygon
     for s in range(2):
-        vel=[10,40][s]
-        ax=axs[s]
-        cis=plotSmps(suf,ax,xshift=0,lim=None,crc=0,mspeed=vel)
-        ax.grid(False)
-        ax.set_xlabel('deg');ax.set_ylabel('deg')
-        #plt.xlim([-10,10]);plt.ylim([-4,14]);
-    
-        age=np.linspace(4,10,101)
+        vel=[np.linspace(5,40,101),20][s]
+        ax=axs[6+s]
+        age=[7,np.linspace(4,10,101)][s]
+        cis=plotSmps(suf,None,mage=age,xshift=0,lim=None,crc=0,mspeed=vel)
         b1=0;xtcks=[]
         
         for i in range(len(cis)):
@@ -1402,22 +1447,21 @@ def plotMST_AA_MPD(suf='b1131',axs=[]):
             if i<4:trg=list(a2clr.keys())[i]
             else: trg=[np.pi,np.pi,np.pi/2][i-4]
             clr=list(a2clr.values())[i]
-            ax=axs[s+4]
             if int(suf[4])==0: 
                 r=sap(d[:,0,:],[50,2.5,97.5],axis=0)
                 k=[3,0,1,2,4,5,6][i]
                 bbb=r.shape[1]//2
                 ax.plot(k,r[0,bbb],'.',color=clr)
                 ax.plot([k,k],r[1:,bbb],color=clr)
-            else:
+            elif int(suf[4])==1:
                 dst,r,rd=xy2dphi(d[:,0,:],d[:,1,:],trg)
                 r=180-r
                 ax.plot([i-.5,i+.5],[180-trg/np.pi*180,180-trg/np.pi*180],'--',c=clr)
                 gap=.2
-                x=(age-4)/7*(1-gap)+i-.5+gap/2
+                x=[(vel-5)/35,(age-4)/7][s]*(1-gap)+i-.5+gap/2
                 xtcks.extend([x[0],x[x.size//2],x[-1]])
                 ax.plot(x,r[0,:],c=clr)
-                ax.plot(x[0]-.2,180-(list(a2clr.keys())[i]%10)/np.pi*180,'>',c=clr)
+                ax.plot(x[0]-.1,180-(list(a2clr.keys())[i]%10)/np.pi*180,'>',c=clr)
                 u=r[2,:];l=r[1,:]
                 xx=np.concatenate([x,x[::-1]])
                 ci=np.concatenate([u,l[::-1]])
@@ -1426,11 +1470,11 @@ def plotMST_AA_MPD(suf='b1131',axs=[]):
         if int(suf[4])==1: 
             ax.set_ylim([-60,180])
             ax.set_yticks([-45,0,45,90,135,180])
-            if s==0:ax.set_ylabel('Anticipated Angle in Degrees');
+            ax.set_ylabel('Anticipated Angle in °');
         else:
             tmp=np.max(np.abs(ax.set_ylim()))
             ax.set_ylim([-tmp,tmp])
-            if s==0:ax.set_ylabel('Motion-parallel Displacement in deg');
+            ax.set_ylabel('Motion-parallel Displacement in deg');
             ax.set_xlabel('Bounce Type')
         ax.set_xticks([])
         ax.grid(True,axis='y')
@@ -1468,12 +1512,12 @@ def plotMain(suf):
     from matusplotlib import formatAxes, subplotAnnotate
     fig, discax = plt.subplots(figsize=(12,12),nrows=3, ncols=3)
     discax=np.reshape(discax,-1).tolist()
-    fig, axs = plt.subplots(figsize=(12,9),nrows=3, ncols=4)
+    fig, axs = plt.subplots(figsize=(12,9),nrows=3, ncols=3)
     axs=np.reshape(axs,-1).tolist()
     formatAxes(axs)
     plotSacFrequency(axs=[axs[3]])
-    plotMST_AA_MPD(f'b{suf}1',axs=axs[:3]+[discax[0]]+axs[4:8]) 
-    plotMST_AA_MPD(f'b{suf}0',axs=discax[:4]+axs[8:]) 
+    plotMST_AA_MPD(f'b{suf}1',axs=axs[:3]+discax[:3]+axs[4:6]) 
+    plotMST_AA_MPD(f'b{suf}0',axs=discax[:3]+axs[6:]+discax[6:]) 
     for ax in axs: subplotAnnotate(loc='ne',nr=np.nan,ax=ax)
     plt.gcf().tight_layout()
     plt.savefig(FPATH+f'main{suf}.png',dpi=400,bbox_inches='tight',pad_inches=0)
@@ -1517,8 +1561,8 @@ def printStats(suf):
     R[:,0]=np.array([' ','LM Saccades','Bounce Saccades','  Black','  Blue','  Magenta','  Cyan','  Lime','  Green','  Red'])
     ndarray2latextable(R,decim=[0,0,1,1,0,1,1])
     print('hypothesis test')
-    p=np.load('data/ht00.npy')
-    print(f'p(H_inv)={p[0]}, p(H_none)={p[1]},p(H_phys)={p[3]},p(H_true)={p[4]}')
+    #p=np.load('data/ht00.npy')
+    #print(f'p(H_inv)={p[0]}, p(H_none)={p[1]},p(H_phys)={p[3]},p(H_true)={p[4]}')
     print('''standard deviation''')
     if int(suf[2]) in (1,4):
         for sf in [f'b{suf}1',f'b{suf}0',f'l{suf}0']:
@@ -1592,14 +1636,14 @@ if __name__=='__main__':
     vpinfo=getMetadata(showFigure=False)
     checkFiles(vpinfo)
     extractFromDataFiles()
-    accuracyCorrection(method='partial pooling',applyCor=True,exclude=False)
+    accuracyCorrection(method='no pooling',applyCor=True,exclude=False)
     changeUnits()
     extractSaccades()
     # main statistical analyses 
     rotateSaccades()
     # mean saccade target & anticipated angle
     fitRegressionModel(bounceSac=1,pCenter=1,pVelM=1,pVelS=4,yType=1,ssmm=10)
-    hypothesisTest(suf='b1141',ML=False,BALANCED=False)
+    #hypothesisTest(suf='b1141',ML=False,BALANCED=False)
     # motion-parallel displacement
     fitRegressionModel(bounceSac=1,pCenter=1,pVelM=1,pVelS=4,yType=0,ssmm=10)
     fitRegressionModel(bounceSac=0,pCenter=1,pVelM=1,pVelS=4,yType=0,ssmm=10)
@@ -1617,14 +1661,15 @@ if __name__=='__main__':
     fitRegressionModel(bounceSac=1,pCenter=1,pVelM=1,pVelS=4,yType=1,ssmm=10, suf='sacmaxl1')
     rotateSaccades()
     # results presentation
-    plotExplanation();stop
+    plotExplanation();
     plotTrajectory() 
     plotMain('114')
     printStats('114')
+
     # present supplementary analyses
     plotMST_AA_MPD('b1141sacs200')
     plotMST_AA_MPD('b1141csdist10')
     plotMST_AA_MPD('b1141sacmaxl1')
-        
+    
     
     
