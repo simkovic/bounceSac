@@ -60,7 +60,7 @@ def imshow(*args,**kwargs):
 def formatAxes(axs):
     if not type(axs) is list: axs=[axs]
     for ax in axs:
-        ax.xaxis.set_ticks_position('none')
+        ax.xaxis.set_ticks_position('none') 
         ax.yaxis.set_ticks_position('none')
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
@@ -137,7 +137,6 @@ def plothistCI(a,b,l,u):
         >>> a,b,l,u=histCI(x,bins=bn)
         >>> plothistCI(a,b,l,u)
     '''
-    b=b[:-1]+np.diff(b)/2.
     plt.plot(b,a)
     x=np.concatenate([b,b[::-1]])
     ci=np.concatenate([u,l[::-1]])
